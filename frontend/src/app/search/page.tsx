@@ -13,9 +13,6 @@ import {
   Loader2, 
   FileText,
   AlertCircle,
-  Database,
-  ArrowRight,
-  ChevronRight,
   CheckSquare,
   Square,
   Globe
@@ -108,7 +105,7 @@ export default function SearchPage() {
         { role: 'assistant', content: data.answer }
       ]);
     },
-    onError: (err: any) => {
+    onError: (err: Error) => {
       toast.error(err.message || 'Failed to get answer from AI agent');
       setChatHistory((prev) => [
         ...prev,
@@ -236,7 +233,7 @@ export default function SearchPage() {
               <span>No matching document chunks found in index.</span>
             </div>
           ) : (
-            results.map((item: any) => {
+            results.map((item) => {
               const isSelected = selectedDocIds.includes(item.id);
               
               return (
@@ -299,7 +296,7 @@ export default function SearchPage() {
                     {(item.snippet || item.excerpt) && (
                       <div 
                         className="mt-1 bg-black/35 border border-white/[0.02] p-3 rounded-lg text-xs font-mono text-neutral-400 select-text leading-relaxed whitespace-pre-wrap [&>mark]:bg-primary/20 [&>mark]:text-primary [&>mark]:px-1 [&>mark]:rounded"
-                        dangerouslySetInnerHTML={{ __html: item.snippet || item.excerpt }}
+                        dangerouslySetInnerHTML={{ __html: item.snippet || item.excerpt || '' }}
                       />
                     )}
                   </div>

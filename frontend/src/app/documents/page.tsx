@@ -17,10 +17,6 @@ import {
   Filter, 
   AlertCircle,
   Eye, 
-  CheckCircle2, 
-  XCircle,
-  Clock,
-  Sparkles,
   Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -46,7 +42,7 @@ export default function DocumentsPage() {
       queryClient.invalidateQueries({ queryKey: ['documents'] });
       toast.success('Document re-processing queued');
     },
-    onError: (err: any) => {
+    onError: (err: Error) => {
       toast.error(err.message || 'Failed to queue re-processing');
     }
   });
@@ -58,7 +54,7 @@ export default function DocumentsPage() {
       queryClient.invalidateQueries({ queryKey: ['documents'] });
       toast.success('Document deleted successfully');
     },
-    onError: (err: any) => {
+    onError: (err: Error) => {
       toast.error(err.message || 'Failed to delete document');
     }
   });
@@ -73,9 +69,10 @@ export default function DocumentsPage() {
         await api.uploadDocument(file);
         setUploadingFiles((prev) => prev.filter((f) => f.name !== file.name));
         toast.success(`Uploaded ${file.name} successfully!`);
-      } catch (err: any) {
+      } catch (err: unknown) {
         setUploadingFiles((prev) => prev.filter((f) => f.name !== file.name));
-        toast.error(`Failed to upload ${file.name}: ${err.message || 'Duplicate or invalid'}`);
+        const errMsg = err instanceof Error ? err.message : 'Duplicate or invalid';
+        toast.error(`Failed to upload ${file.name}: ${errMsg}`);
       }
     });
 

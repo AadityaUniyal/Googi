@@ -4,16 +4,14 @@ import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { KpiCard } from '@/components/ui/KpiCard';
-import { CardSkeleton } from '@/components/ui/Skeleton';
+
 import clsx from 'clsx';
 import { 
   FileText, 
   Target, 
   Eye, 
   Zap, 
-  CheckCircle2, 
   AlertCircle,
-  Database,
   ArrowRight,
   Loader2
 } from 'lucide-react';
@@ -29,7 +27,7 @@ import {
   Cell,
   Legend
 } from 'recharts';
-import { motion } from 'framer-motion';
+
 import Link from 'next/link';
 
 const COLORS = ['#4F6EF7', '#7C3AED', '#22C55E', '#F59E0B', '#EF4444', '#6B7280'];
@@ -50,7 +48,7 @@ export default function DashboardPage() {
   });
 
   // Fetch System Health
-  const { data: health, isLoading: healthLoading } = useQuery({
+  const { data: health } = useQuery({
     queryKey: ['health'],
     queryFn: api.getHealth,
     refetchInterval: 10000,
@@ -94,10 +92,10 @@ export default function DashboardPage() {
           {/* Individual services */}
           <div className="flex items-center gap-3">
             {[
-              { label: 'DB', status: health?.database },
-              { label: 'MQ', status: health?.rabbitmq },
-              { label: 'Redis', status: health?.redis },
-              { label: 'Vector', status: health?.chroma },
+              { label: 'DB', status: health?.checks?.['database']?.status },
+              { label: 'MQ', status: health?.checks?.['rabbitmq']?.status },
+              { label: 'Redis', status: health?.checks?.['redis']?.status },
+              { label: 'Vector', status: health?.checks?.['chroma']?.status },
             ].map((srv) => (
               <div key={srv.label} className="flex items-center gap-1">
                 <span className={clsx(

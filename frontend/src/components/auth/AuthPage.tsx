@@ -39,8 +39,9 @@ export const AuthPage: React.FC = () => {
         toast.success('Registration complete! Please log in.');
         setIsLogin(true);
       }
-    } catch (err: any) {
-      toast.error(err.message || 'Authentication failed');
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Authentication failed';
+      toast.error(errMsg);
     } finally {
       setIsLoading(false);
     }

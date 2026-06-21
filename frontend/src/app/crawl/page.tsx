@@ -11,7 +11,6 @@ import {
   Loader2, 
   Link2, 
   Sparkles, 
-  CheckCircle2,
   AlertCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -36,7 +35,7 @@ export default function CrawlPage() {
       setSeedUrl('');
       queryClient.invalidateQueries({ queryKey: ['crawledPages'] });
     },
-    onError: (err: any) => {
+    onError: (err: Error) => {
       toast.error(err.message || 'Failed to start crawl task');
     }
   });
@@ -48,7 +47,7 @@ export default function CrawlPage() {
       toast.success(data.message || 'PageRank scores updated!');
       queryClient.invalidateQueries({ queryKey: ['crawledPages'] });
     },
-    onError: (err: any) => {
+    onError: (err: Error) => {
       toast.error(err.message || 'Failed to calculate PageRank');
     }
   });

@@ -68,8 +68,43 @@ export interface AuditLogResponse {
   filename: string;
   operator: string;
   action: string;
-  details: any;
+  details: Record<string, unknown> | null;
   timestamp: string;
+}
+
+export interface CrawledPage {
+  id: string;
+  url: string;
+  title: string | null;
+  pagerank: number;
+  last_crawled_at: string;
+  page_content?: string;
+}
+
+export interface HealthStatus {
+  status: string;
+  checks: Record<string, { status: string; type?: string; error?: string }>;
+}
+
+export interface SemanticSearchResult {
+  id: string;
+  filename: string;
+  category: string | null;
+  confidence_score: number;
+  excerpt: string;
+}
+
+export interface SearchResultItem {
+  id: string;
+  filename: string;
+  type: "file" | "web";
+  category: string;
+  url?: string;
+  consensus_score: number | null;
+  created_at: string;
+  snippet?: string;
+  excerpt?: string;
+  score?: number | null;
 }
 
 // Request wrapper helper
@@ -111,7 +146,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
             headers,
           });
           if (retryResponse.ok) {
-            if (retryResponse.status === 204) return null as any;
+            if (retryResponse.status === 204) return null as unknown as T;
             return retryResponse.json() as Promise<T>;
           }
         }
@@ -133,7 +168,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
 
   if (response.status === 244 || response.status === 204) {
-    return null as any;
+    return null as unknown as T;
   }
 
   return response.json() as Promise<T>;
@@ -228,7 +263,7 @@ export const api = {
   },
 
   // Search
-  searchMetadata: async (query?: string, category?: string, status?: string, minScore?: number): Promise<DocumentSimpleResponse[]> => {
+  searchMetadata: async (query?: string, category?: string, status?: string, minScore?: number): Promise<SearchResultItem[]> => {
     let url = "/api/search";
     const params = new URLSearchParams();
     if (query) params.append("query", query);
@@ -241,7 +276,7 @@ export const api = {
     return request(url);
   },
 
-  searchSemantic: async (query: string, category?: string, nResults: number = 5): Promise<any[]> => {
+  searchSemantic: async (query: string, category?: string, nResults: number = 5): Promise<SemanticSearchResult[]> => {
     return request("/api/search/semantic", {
       method: "POST",
       body: JSON.stringify({ query, category, n_results: nResults }),
@@ -269,7 +304,7 @@ export const api = {
   },
 
   // Health
-  getHealth: async (): Promise<any> => {
+  getHealth: async (): Promise<HealthStatus> => {
     return request("/health");
   },
 
@@ -285,7 +320,7 @@ export const api = {
     });
   },
 
-  getCrawledPages: async (): Promise<any[]> => {
+  getCrawledPages: async (): Promise<CrawledPage[]> => {
     return request("/api/crawl/pages");
   },
 

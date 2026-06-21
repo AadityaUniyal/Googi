@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useSearchParams, useRouter } from 'next/navigation';
@@ -12,17 +12,14 @@ import {
   Loader2, 
   AlertCircle, 
   Lock, 
-  Unlock, 
   Check, 
   X, 
-  RotateCcw,
   Edit2,
   FileText,
   Clock,
   Sparkles
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
-import { motion, AnimatePresence } from 'framer-motion';
 
 interface FieldUpdate {
   field_key: string;
@@ -36,7 +33,7 @@ export default function ReviewPage() {
   const { user } = useAuthStore();
 
   const docIdParam = searchParams.get('doc_id') || '';
-  const [selectedDocId, setSelectedDocId] = useState<string>(docIdParam);
+  const selectedDocId = docIdParam;
   const [fieldUpdates, setFieldUpdates] = useState<Record<string, string>>({});
   const [editingField, setEditingField] = useState<string | null>(null);
   const [editValue, setEditValue] = useState<string>('');
@@ -48,51 +45,7 @@ export default function ReviewPage() {
   const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Sync state with URL query param
-  useEffect(() => {
-    if (docIdParam && docIdParam !== selectedDocId) {
-      setSelectedDocId(docIdParam);
-    }
-  }, [docIdParam]);
-
-  // Fetch Review Queue (documents awaiting review or processed)
-  const { data: queue, isLoading: queueLoading } = useQuery({
-    queryKey: ['reviewQueue'],
-    queryFn: async () => {
-      // Get all documents and filter client-side for REVIEW queue
-      const allDocs = await api.listDocuments();
-      return allDocs.filter(d => d.status === 'AWAITING_REVIEW' || d.status === 'PROCESSING');
-    },
-    refetchInterval: 12000,
-  });
-
-  // Fetch Full Document Details when selected
-  const { data: doc, isLoading: docLoading, refetch: refetchDoc } = useQuery({
-    queryKey: ['documentDetails', selectedDocId],
-    queryFn: () => api.getDocument(selectedDocId),
-    enabled: !!selectedDocId,
-  });
-
-  // Initialize form state when document details load
-  useEffect(() => {
-    if (doc) {
-      const initialUpdates: Record<string, string> = {};
-      doc.fields.forEach((f) => {
-        initialUpdates[f.field_key] = f.consensus_value || f.extracted_value || '';
-      });
-      setFieldUpdates(initialUpdates);
-      
-      // Attempt to acquire lock on the document
-      acquireLockMutation.mutate(selectedDocId);
-    }
-    
-    // Cleanup locks on unmount or document change
-    return () => {
-      cleanupLock();
-    };
-  }, [doc]);
-
-  const cleanupLock = () => {
+  const cleanupLock = useCallback(() => {
     if (selectedDocId && isLockedByMe) {
       api.unlockDocument(selectedDocId).catch(() => {});
     }
@@ -100,7 +53,7 @@ export default function ReviewPage() {
     setLockOwner(null);
     if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
     if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
-  };
+  }, [selectedDocId, isLockedByMe]);
 
   // Lock Mutation
   const acquireLockMutation = useMutation({
@@ -143,7 +96,7 @@ export default function ReviewPage() {
         });
       }, 10 * 60 * 1000);
     },
-    onError: (err: any) => {
+    onError: () => {
       setIsLockedByMe(false);
       setLockOwner('Another reviewer');
       toast.error('This document is currently locked by another reviewer.');
@@ -160,17 +113,54 @@ export default function ReviewPage() {
       
       // Release lock and clear select
       cleanupLock();
-      setSelectedDocId('');
       router.push('/review');
     },
-    onError: (err: any) => {
+    onError: (err: Error) => {
       toast.error(err.message || 'Failed to submit review');
     }
   });
 
+  // Fetch Review Queue (documents awaiting review or processed)
+  const { data: queue, isLoading: queueLoading } = useQuery({
+    queryKey: ['reviewQueue'],
+    queryFn: async () => {
+      // Get all documents and filter client-side for REVIEW queue
+      const allDocs = await api.listDocuments();
+      return allDocs.filter(d => d.status === 'AWAITING_REVIEW' || d.status === 'PROCESSING');
+    },
+    refetchInterval: 12000,
+  });
+
+  // Fetch Full Document Details when selected
+  const { data: doc, isLoading: docLoading } = useQuery({
+    queryKey: ['documentDetails', selectedDocId],
+    queryFn: () => api.getDocument(selectedDocId),
+    enabled: !!selectedDocId,
+  });
+
+  // Initialize form state when document details load
+  const [lastInitializedDoc, setLastInitializedDoc] = useState<string>('');
+  if (doc && doc.id !== lastInitializedDoc) {
+    setLastInitializedDoc(doc.id);
+    const initialUpdates: Record<string, string> = {};
+    doc.fields.forEach((f) => {
+      initialUpdates[f.field_key] = f.consensus_value || f.extracted_value || '';
+    });
+    setFieldUpdates(initialUpdates);
+  }
+
+  // Attempt to acquire lock on the document
+  useEffect(() => {
+    if (selectedDocId) {
+      acquireLockMutation.mutate(selectedDocId);
+    }
+    return () => {
+      cleanupLock();
+    };
+  }, [selectedDocId, acquireLockMutation, cleanupLock]);
+
   const selectDocument = (id: string) => {
     cleanupLock();
-    setSelectedDocId(id);
     setFieldUpdates({});
     router.push(`/review?doc_id=${id}`);
   };
@@ -450,7 +440,7 @@ export default function ReviewPage() {
 }
 
 const get_logger = (name: string) => ({
-  info: (...args: any[]) => console.log(`[${name}]`, ...args),
-  warning: (...args: any[]) => console.warn(`[${name}]`, ...args),
+  info: (...args: unknown[]) => console.log(`[${name}]`, ...args),
+  warning: (...args: unknown[]) => console.warn(`[${name}]`, ...args),
 });
 const logger = get_logger('ReviewPage');

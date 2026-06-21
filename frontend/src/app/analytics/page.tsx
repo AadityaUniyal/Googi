@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { KpiCard } from '@/components/ui/KpiCard';
-import { Badge } from '@/components/ui/Badge';
+
 import clsx from 'clsx';
 import { 
   BarChart3, 
@@ -13,7 +13,6 @@ import {
   UserCheck, 
   ChevronDown, 
   ChevronUp, 
-  FileText,
   AlertCircle,
   Loader2
 } from 'lucide-react';
@@ -26,9 +25,7 @@ import {
   ResponsiveContainer,
   BarChart,
   Bar,
-  Cell,
-  PieChart,
-  Pie
+  Cell
 } from 'recharts';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -60,7 +57,7 @@ export default function AnalyticsPage() {
 
   const dailyTrends = charts?.daily_trends || [];
   const statusDistribution = charts?.status_distribution || [];
-  const categoryDistribution = charts?.category_distribution || [];
+
 
   const handleToggleExpandLog = (id: string) => {
     setExpandedLogId(prev => (prev === id ? null : id));
