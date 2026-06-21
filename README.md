@@ -62,15 +62,15 @@ The platform operates on an asynchronous event-driven model:
 Traditional extraction systems trust a single AI model's output, leading to hallucinated numbers or format omissions. DocIntel AI solves this by introducing a **4-Agent Verification Circle**:
 1. **Extractor Agent**: Extracts structured key-value pairs depending on the document type (e.g., Vendor Name, Subtotal, Part Numbers, Quantity).
 2. **Critic Agent**: Audits the extraction. It cross-compares the structured JSON back to the raw OCR text, flagging missing data or digit transpositions.
-3. **Auditor Agent**: Runs deterministic mathematical audits. For Invoices, it validates if `Subtotal + Tax + Shipping == Total`. For RFQs, it ensures values are positive. If the math fails, it overrides the score to `0.0`.
+3. **Auditor Agent**: Runs deterministic mathematical audits. For Invoices, it validates if `Subtotal + Tax + Shipping == Total`. For RFQs, it ensures values are positive. It applies **Graduated Scoring**: minor rounding errors (<0.5%) trigger a warning and a high score (0.95), moderate errors (<5%) receive a lower score (0.50), and severe arithmetic mismatches are penalized to 0.0.
 4. **Compliance Agent**: Scrapes the document for regulatory checklist items (e.g., Delaware governing law in contracts, RoHS declarations in conformance certificates).
-* **Consensus Engine**: Combines the weights ($\text{Critic}=50\%, \text{Auditor}=30\%, \text{Compliance}=20\%$) to assign a field-level confidence score.
+* **Consensus Engine**: Assigns field-level and document-level scores using **Document-Type-Aware Consensus Weights** (e.g., math-heavy weights for Invoices, compliance-heavy weights for Contracts).
 
 ### ✍️ Human-in-the-Loop Review Portal
 When the Consensus Engine flags a document (overall confidence < 85% or key arithmetic discrepancy), it routes it to the **Review Queue**. Reviewers interact with a split-screen layout:
 * **Left Panel**: Raw extracted OCR text layout.
 * **Right Panel**: Editable field form. Input fields are color-coded in real-time (Red = defect, Yellow = warning, Green = passed).
-* **Concurrency Locking**: Utilizes a Redis-backed session locker (with in-memory dict fallbacks) to prevent multiple reviews on the same document.
+* **Concurrency Locking**: Utilizes a strict Redis-based session locker with atomic `SET NX EX` lock operations and an active lock heartbeat renewal endpoint to prevent multiple reviewers from editing the same document.
 
 ### 🔍 Cognitive Vector Search & RAG Chatbot
 DocIntel AI supports two modes of search:
@@ -104,6 +104,8 @@ A control dashboard displaying platform health:
 
 ```
 document-intelligence-platform/
+├── .github/workflows/
+│   └── ci.yml                      # GitHub Actions lint, test, & Docker build pipeline
 ├── backend/
 │   ├── app/
 │   │   ├── main.py                 # FastAPI Web Server entrypoint
@@ -115,16 +117,21 @@ document-intelligence-platform/
 │   │   ├── services/               # System wrappers (ocr, storage, queue, vector_store)
 │   │   ├── agents/                 # Multi-Agent Consensus System (critic, auditor, compliance)
 │   │   └── worker.py               # RabbitMQ consumer background worker
-│   ├── tests/                      # Automated test scripts (pytest)
+│   ├── tests/                      # 50+ automated tests (pytest)
+│   ├── Dockerfile                  # Multi-stage production build for backend
 │   └── requirements.txt            # Python dependencies
 ├── frontend/
 │   ├── src/
 │   │   ├── app/                    # Next.js workspace layouts & pages
 │   │   ├── lib/                    # API wrappers
-│   │   └── components/
-│   └── package.json                # Frontend packages (Recharts, Lucide)
+│   │   └── components/             # Reusable UI components (Zustand store integration)
+│   ├── Dockerfile                  # Production build Dockerfile
+│   └── package.json                # Frontend packages (Recharts, Lucide, Framer Motion)
+├── k8s/                            # Kubernetes deployment & config manifests
 ├── docker-compose.yml              # Local infrastructure composer (Redis, RabbitMQ)
-└── start_platform.ps1              # Multi-process launch script for Windows
+├── Makefile                        # Multi-environment automation tasks (dev, test, build, migration)
+├── start_platform.sh               # Unix bash launcher script
+└── start_platform.ps1              # PowerShell launch script for Windows
 ```
 
 ---
@@ -133,18 +140,43 @@ document-intelligence-platform/
 
 ### Prerequisites
 1. **Docker Desktop** (for Redis & RabbitMQ).
-2. **Node.js** (v18+ recommended).
-3. **Python 3.10+**.
+2. **Node.js** (v20+ recommended).
+3. **Python 3.11+**.
 
-### Quick Start (Windows)
-We have bundled a PowerShell startup script. Simply execute:
+### Quick Start
+To launch the entire platform (database, cache, broker, backend API, worker, and frontend dev server) with a single command:
+
+**On macOS / Linux:**
+```bash
+chmod +x start_platform.sh
+./start_platform.sh
+```
+
+**On Windows:**
 ```powershell
 ./start_platform.ps1
 ```
 
+**Using the Makefile:**
+```bash
+make dev
+```
+
+### Running Tests
+To run the full unit and integration test suite:
+```bash
+make test
+```
+
+### Docker Production Builds
+To build production-ready containers:
+```bash
+make build
+```
+
 ### Manual Setup
 
-#### Step 1: Clone and Start Containers
+#### Step 1: Start Infrastructure Containers
 ```bash
 docker-compose up -d
 ```
@@ -154,11 +186,13 @@ docker-compose up -d
 cd backend
 python -m pip install -r requirements.txt
 ```
-*(Optional)* Add a `.env` file inside the `backend/` directory:
+Create a `.env` file inside the `backend/` directory referencing `backend/.env.example`:
 ```env
+DATABASE_URL=postgresql://user:password@localhost:5432/docintel
+JWT_SECRET_KEY=generate_a_secure_random_string
 GEMINI_API_KEY=your_gemini_api_key_here
 ```
-If no key is provided, the platform automatically switches to a high-fidelity mock heuristic engine so everything runs instantly out of the box!
+*Note: If no Gemini API key is provided, the platform automatically switches to a high-fidelity mock heuristic engine so everything runs instantly out of the box!*
 
 #### Step 3: Run FastAPI Server
 ```bash
