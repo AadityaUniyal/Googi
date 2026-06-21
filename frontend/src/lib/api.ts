@@ -271,5 +271,27 @@ export const api = {
   // Health
   getHealth: async (): Promise<any> => {
     return request("/health");
+  },
+
+  // Crawl & Auto-Suggest
+  searchSuggest: async (q: string): Promise<string[]> => {
+    return request(`/api/search/suggest?q=${encodeURIComponent(q)}`);
+  },
+
+  startCrawl: async (url: string, maxDepth: number = 2): Promise<{ message: string }> => {
+    return request("/api/crawl", {
+      method: "POST",
+      body: JSON.stringify({ url, max_depth: maxDepth }),
+    });
+  },
+
+  getCrawledPages: async (): Promise<any[]> => {
+    return request("/api/crawl/pages");
+  },
+
+  recalculatePageRank: async (): Promise<{ message: string }> => {
+    return request("/api/crawl/pagerank", {
+      method: "POST",
+    });
   }
 };

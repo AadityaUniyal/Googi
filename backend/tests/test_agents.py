@@ -243,7 +243,8 @@ class TestConsensusEngine:
     @patch("app.agents.consensus.run_auditor_agent")
     @patch("app.agents.consensus.run_critic_agent")
     @patch("app.agents.consensus.run_extractor_agent")
-    def test_consensus_returns_structured_result(
+    @pytest.mark.asyncio
+    async def test_consensus_returns_structured_result(
         self, mock_extractor, mock_critic, mock_auditor, mock_compliance
     ):
         """Consensus should return fields with weighted confidence scores."""
@@ -264,7 +265,7 @@ class TestConsensusEngine:
             "total_amount": {"score": 0.85, "notes": "OK"}
         }
 
-        result = run_agent_consensus("Sample OCR text", DocumentCategory.INVOICE)
+        result = await run_agent_consensus("Sample OCR text", DocumentCategory.INVOICE)
         assert isinstance(result, dict)
         assert "fields" in result
         assert "overall_score" in result
@@ -275,7 +276,8 @@ class TestConsensusEngine:
     @patch("app.agents.consensus.run_auditor_agent")
     @patch("app.agents.consensus.run_critic_agent")
     @patch("app.agents.consensus.run_extractor_agent")
-    def test_consensus_flags_low_confidence_fields(
+    @pytest.mark.asyncio
+    async def test_consensus_flags_low_confidence_fields(
         self, mock_extractor, mock_critic, mock_auditor, mock_compliance
     ):
         """Fields with low scores should be flagged."""
@@ -290,7 +292,7 @@ class TestConsensusEngine:
             "vendor_name": {"score": 0.30, "notes": "Missing"}
         }
 
-        result = run_agent_consensus("Some text", DocumentCategory.INVOICE)
+        result = await run_agent_consensus("Some text", DocumentCategory.INVOICE)
         assert isinstance(result, dict)
         # Low-scoring fields should result in lower consensus
         if "fields" in result:
@@ -302,7 +304,8 @@ class TestConsensusEngine:
     @patch("app.agents.consensus.run_auditor_agent")
     @patch("app.agents.consensus.run_critic_agent")
     @patch("app.agents.consensus.run_extractor_agent")
-    def test_consensus_handles_empty_extraction(
+    @pytest.mark.asyncio
+    async def test_consensus_handles_empty_extraction(
         self, mock_extractor, mock_critic, mock_auditor, mock_compliance
     ):
         """Empty extraction should not crash the consensus engine."""
@@ -311,5 +314,5 @@ class TestConsensusEngine:
         mock_auditor.return_value = {}
         mock_compliance.return_value = {}
 
-        result = run_agent_consensus("Empty document", DocumentCategory.UNKNOWN)
+        result = await run_agent_consensus("Empty document", DocumentCategory.UNKNOWN)
         assert isinstance(result, dict)

@@ -71,7 +71,8 @@ def process_document(document_id: str):
         logger.info(f"Classified document {doc.id} as {category.value}")
 
         # 4. Run Multi-Agent Consensus Validation
-        consensus = run_agent_consensus(ocr_result, category)
+        import asyncio
+        consensus = asyncio.run(run_agent_consensus(ocr_result, category))
         
         # Save Extracted Fields
         # Remove any existing fields first (in case of re-processing)
@@ -192,6 +193,20 @@ def rabbitmq_worker_main():
             )
             connection = pika.BlockingConnection(parameters)
             channel = connection.channel()
+            
+            # Graceful shutdown handler
+            import signal
+            def handle_shutdown(signum, frame):
+                logger.info("Received termination signal. Shutting down worker gracefully...")
+                try:
+                    if channel.is_open:
+                        channel.stop_consuming()
+                    if connection.is_open:
+                        connection.close()
+                except Exception as ex:
+                    logger.error(f"Error during shutdown: {ex}")
+            signal.signal(signal.SIGTERM, handle_shutdown)
+            signal.signal(signal.SIGINT, handle_shutdown)
             
             # Declare dead-letter exchange & queue
             channel.exchange_declare(exchange=DLX_EXCHANGE, exchange_type="direct", durable=True)

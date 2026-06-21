@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
+    REDIS_PASSWORD: Optional[str] = "devpassword"
     
     # Storage & RAG Directories
     UPLOAD_DIR: str = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads")

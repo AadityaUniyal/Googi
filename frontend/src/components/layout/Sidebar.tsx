@@ -14,7 +14,8 @@ import {
   LogOut, 
   ChevronLeft, 
   ChevronRight,
-  Sparkles
+  Sparkles,
+  Globe
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { motion } from 'framer-motion';
@@ -29,6 +30,7 @@ export const Sidebar: React.FC = () => {
     { label: 'Documents', path: '/documents', icon: FileText },
     { label: 'Review Queue', path: '/review', icon: Eye },
     { label: 'Search & RAG', path: '/search', icon: Search },
+    { label: 'Web Crawler', path: '/crawl', icon: Globe },
     { label: 'Analytics', path: '/analytics', icon: BarChart3 },
   ];
 

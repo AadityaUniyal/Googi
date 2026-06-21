@@ -28,7 +28,13 @@ LOCK_TTL_SECONDS = 900
 def get_redis_client() -> redis.Redis:
     """Return a Redis client or raise if Redis is unavailable."""
     try:
-        r = redis.Redis(host=settings.REDIS_HOST, port=settings.REDIS_PORT, decode_responses=True, socket_connect_timeout=2)
+        r = redis.Redis(
+            host=settings.REDIS_HOST,
+            port=settings.REDIS_PORT,
+            password=settings.REDIS_PASSWORD,
+            decode_responses=True,
+            socket_connect_timeout=2
+        )
         r.ping()
         return r
     except Exception as exc:

@@ -118,8 +118,19 @@ echo -e "${GREEN}[1/4] Starting infrastructure (RabbitMQ + Redis)...${NC}"
 docker-compose up -d
 
 # Wait for services to become healthy
-info "Waiting for infrastructure to be ready..."
-sleep 5
+wait_for_port() {
+    local host=$1
+    local port=$2
+    local name=$3
+    info "Waiting for $name to be ready on $host:$port..."
+    while ! $PYTHON -c "import socket; s = socket.socket(); s.settimeout(1); s.connect(('$host', $port))" &>/dev/null; do
+        sleep 1
+    done
+    info "$name is ready!"
+}
+
+wait_for_port "localhost" 6379 "Redis"
+wait_for_port "localhost" 5672 "RabbitMQ"
 
 # ---------------------------------------------------------------------------
 # Step 2: FastAPI Backend

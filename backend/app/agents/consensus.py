@@ -18,7 +18,7 @@ WEIGHT_CONFIG: Dict[DocumentCategory, Tuple[float, float, float]] = {
     DocumentCategory.UNKNOWN:        (0.5, 0.3, 0.2),  # Default
 }
 
-def run_agent_consensus(ocr_text: str, category: DocumentCategory) -> Dict[str, Any]:
+async def run_agent_consensus(ocr_text: str, category: DocumentCategory) -> Dict[str, Any]:
     """
     Orchestrates the multi-agent consensus system:
     1. Extractor Agent extracts fields.
@@ -33,17 +33,16 @@ def run_agent_consensus(ocr_text: str, category: DocumentCategory) -> Dict[str, 
     extracted_fields = run_extractor_agent(ocr_text, category)
     logger.info(f"Extractor Agent completed: {list(extracted_fields.keys())}")
     
-    # 2. Critic Agent
-    critic_results = run_critic_agent(ocr_text, extracted_fields)
-    logger.info("Critic Agent validation completed")
+    # Run Critic, Auditor, and Compliance validation concurrently
+    import asyncio
+    critic_task = asyncio.to_thread(run_critic_agent, ocr_text, extracted_fields)
+    auditor_task = asyncio.to_thread(run_auditor_agent, category, extracted_fields)
+    compliance_task = asyncio.to_thread(run_compliance_agent, ocr_text, category, extracted_fields)
     
-    # 3. Auditor Agent
-    auditor_results = run_auditor_agent(category, extracted_fields)
-    logger.info("Auditor Agent verification completed")
-    
-    # 4. Compliance Agent
-    compliance_results = run_compliance_agent(ocr_text, category, extracted_fields)
-    logger.info("Compliance Agent verification completed")
+    critic_results, auditor_results, compliance_results = await asyncio.gather(
+        critic_task, auditor_task, compliance_task
+    )
+    logger.info("Critic, Auditor, and Compliance agents validation completed concurrently")
     
     # 5. Consensus Calculation with category-aware weights
     w_critic, w_auditor, w_compliance = WEIGHT_CONFIG.get(

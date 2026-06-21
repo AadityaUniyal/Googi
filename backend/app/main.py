@@ -22,6 +22,12 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import settings
 from app.database import engine, Base
+# Import all models to register with Base metadata
+import app.models.auth
+import app.models.document
+import app.models.audit
+import app.models.search
+
 from app.logging_config import (
     setup_logging, generate_trace_id, trace_id_var, get_logger
 )
@@ -166,7 +172,7 @@ app.add_middleware(
 
 # ─── Include Routers ─────────────────────────────────────────────────────────
 
-from app.routes import auth, documents, review, search, analytics, streaming
+from app.routes import auth, documents, review, search, analytics, streaming, crawl
 
 app.include_router(auth.router)
 app.include_router(documents.router)
@@ -174,6 +180,7 @@ app.include_router(review.router)
 app.include_router(search.router)
 app.include_router(analytics.router)
 app.include_router(streaming.router)
+app.include_router(crawl.router)
 
 
 # ─── Health & System Endpoints ───────────────────────────────────────────────
@@ -211,10 +218,10 @@ def health_check():
 
     # Check Redis
     try:
-        import redis as redis_lib
         r = redis_lib.Redis(
             host=settings.REDIS_HOST,
             port=settings.REDIS_PORT,
+            password=settings.REDIS_PASSWORD,
             socket_timeout=2
         )
         r.ping()

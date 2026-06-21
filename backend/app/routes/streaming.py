@@ -38,6 +38,7 @@ async def _redis_event_stream(document_id: str) -> AsyncGenerator[str, None]:
         r = aioredis.Redis(
             host=settings.REDIS_HOST,
             port=settings.REDIS_PORT,
+            password=settings.REDIS_PASSWORD,
             decode_responses=True
         )
         pubsub = r.pubsub()

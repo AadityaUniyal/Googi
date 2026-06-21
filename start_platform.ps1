@@ -8,6 +8,24 @@ Write-Host "=================================================================" -
 Write-Host "[1/4] Starting auxiliary infrastructure (Redis & RabbitMQ)..." -ForegroundColor Yellow
 docker-compose up -d
 
+function WaitFor-Port($Port, $Name) {
+    Write-Host "Waiting for $Name to be ready on port $Port..." -ForegroundColor Yellow
+    while ($true) {
+        try {
+            $tcp = New-Object System.Net.Sockets.TcpClient
+            $tcp.Connect("localhost", $Port)
+            $tcp.Close()
+            Write-Host "$Name is ready!" -ForegroundColor Green
+            break
+        } catch {
+            Start-Sleep -Seconds 1
+        }
+    }
+}
+
+WaitFor-Port 6379 "Redis"
+WaitFor-Port 5672 "RabbitMQ"
+
 # 2. Start FastAPI Backend
 Write-Host "[2/4] Starting FastAPI Backend on http://localhost:8000..." -ForegroundColor Yellow
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "Write-Host 'Starting FastAPI Backend...' -ForegroundColor Cyan; cd backend; python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"

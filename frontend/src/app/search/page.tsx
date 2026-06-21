@@ -17,7 +17,8 @@ import {
   ArrowRight,
   ChevronRight,
   CheckSquare,
-  Square
+  Square,
+  Globe
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -31,6 +32,8 @@ export default function SearchPage() {
   const [query, setQuery] = useState('');
   const [searchMode, setSearchMode] = useState<'semantic' | 'metadata'>('semantic');
   const [category, setCategory] = useState('');
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   
   // RAG Chat state
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
@@ -40,27 +43,37 @@ export default function SearchPage() {
 
   // Search Query
   const { data: results, isLoading, refetch } = useQuery({
-    queryKey: ['search', query, searchMode, category],
+    queryKey: ['search', query, category],
     queryFn: async () => {
       if (!query.strip()) return [];
-      if (searchMode === 'semantic') {
-        const res = await api.searchSemantic(query, category || undefined);
-        // Map semantic results format to table row compatibility
-        return res.map((r: any) => ({
-          id: r.metadata?.document_id || r.id,
-          filename: r.metadata?.filename || 'Document',
-          file_type: r.metadata?.file_type || 'TXT',
-          category: r.metadata?.category || 'UNKNOWN',
-          status: 'PROCESSED',
-          consensus_score: r.score || null,
-          excerpt: r.document, // Excerpt matching text chunk
-        }));
-      } else {
-        return api.searchMetadata(query, category || undefined);
-      }
+      return api.searchMetadata(query, category || undefined);
     },
     enabled: false, // Only trigger on enter or button click
   });
+
+  const handleInputChange = async (val: string) => {
+    setQuery(val);
+    if (val.trim().length > 1) {
+      try {
+        const sugs = await api.searchSuggest(val);
+        setSuggestions(sugs);
+      } catch (e) {
+        console.error(e);
+      }
+    } else {
+      setSuggestions([]);
+    }
+  };
+
+  const handleSelectSuggestion = (sug: string) => {
+    setQuery(sug);
+    setSuggestions([]);
+    setShowSuggestions(false);
+    // Trigger search after state update
+    setTimeout(() => {
+      refetch();
+    }, 50);
+  };
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,6 +81,8 @@ export default function SearchPage() {
       toast.error('Please enter a search query');
       return;
     }
+    setSuggestions([]);
+    setShowSuggestions(false);
     refetch();
   };
 
@@ -131,13 +146,34 @@ export default function SearchPage() {
         <form onSubmit={handleSearchSubmit} className="flex flex-col gap-3">
           <div className="flex items-center gap-3 bg-[#0c0c0c]/85 border border-white/[0.06] p-2 pl-4 rounded-2xl shadow-xl">
             <SearchIcon className="h-5 w-5 text-muted-foreground shrink-0" />
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search e.g. 'Stellar Dynamics titanium rods prices' or invoice numbers..."
-              className="flex-1 bg-transparent border-0 text-neutral-200 placeholder-neutral-500 text-sm focus:outline-none focus:ring-0 font-sans"
-            />
+            <div className="relative flex-grow flex items-center">
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => handleInputChange(e.target.value)}
+                onFocus={() => setShowSuggestions(true)}
+                onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                placeholder="Search e.g. 'Stellar Dynamics titanium rods prices' or type:invoice..."
+                className="w-full bg-transparent border-0 text-neutral-200 placeholder-neutral-500 text-sm focus:outline-none focus:ring-0 font-sans"
+              />
+              
+              {/* Autocomplete Dropdown */}
+              {showSuggestions && suggestions.length > 0 && (
+                <div className="absolute top-full left-[-16px] right-0 mt-3.5 bg-[#0c0c0c]/95 border border-white/[0.06] rounded-xl shadow-2xl z-50 overflow-hidden backdrop-blur-xl max-w-md">
+                  {suggestions.map((sug, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => handleSelectSuggestion(sug)}
+                      className="w-full text-left px-4 py-3 text-xs text-neutral-300 hover:bg-primary/15 hover:text-primary transition-colors border-b border-white/[0.02] last:border-b-0 cursor-pointer flex items-center gap-2 font-sans"
+                    >
+                      <SearchIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                      {sug}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             
             {/* Mode selection toggle */}
             <div className="flex items-center gap-1 bg-[#111] p-1 rounded-xl border border-white/[0.04] shrink-0">
@@ -226,25 +262,45 @@ export default function SearchPage() {
                   <div className="flex-grow flex flex-col gap-2">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2.5">
-                        <FileText className="h-4 w-4 text-muted-foreground" />
-                        <span className="text-xs font-bold text-neutral-200 truncate max-w-[200px]">{item.filename}</span>
+                        {item.type === 'web' ? (
+                          <Globe className="h-4 w-4 text-emerald-400 shrink-0" />
+                        ) : (
+                          <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                        )}
+                        {item.type === 'web' ? (
+                          <a 
+                            href={item.url} 
+                            target="_blank" 
+                            rel="noreferrer" 
+                            className="text-xs font-bold text-neutral-200 hover:text-primary hover:underline truncate max-w-[240px]"
+                          >
+                            {item.filename}
+                          </a>
+                        ) : (
+                          <span className="text-xs font-bold text-neutral-200 truncate max-w-[200px]">{item.filename}</span>
+                        )}
                         <Badge variant="category" value={item.category} size="sm">
                           {item.category}
                         </Badge>
                       </div>
                       
-                      {item.consensus_score !== null && (
+                      {item.score !== undefined && item.score !== null ? (
+                        <span className="text-[10px] font-mono text-muted-foreground">
+                          Relevance: {Math.round(item.score * 100)}%
+                        </span>
+                      ) : item.consensus_score !== null && (
                         <span className="text-[10px] font-mono text-muted-foreground">
                           Match: {Math.round(item.consensus_score * 100)}%
                         </span>
                       )}
                     </div>
 
-                    {/* Excerpt text display */}
-                    {item.excerpt && (
-                      <div className="mt-1 bg-black/35 border border-white/[0.02] p-3 rounded-lg text-xs font-mono text-neutral-400 select-text leading-relaxed whitespace-pre-wrap">
-                        {item.excerpt}
-                      </div>
+                    {/* Excerpt text display with keyword highlights */}
+                    {(item.snippet || item.excerpt) && (
+                      <div 
+                        className="mt-1 bg-black/35 border border-white/[0.02] p-3 rounded-lg text-xs font-mono text-neutral-400 select-text leading-relaxed whitespace-pre-wrap [&>mark]:bg-primary/20 [&>mark]:text-primary [&>mark]:px-1 [&>mark]:rounded"
+                        dangerouslySetInnerHTML={{ __html: item.snippet || item.excerpt }}
+                      />
                     )}
                   </div>
                 </div>
