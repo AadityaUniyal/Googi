@@ -1,7 +1,10 @@
 import uuid
-from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, Float, Text
 from datetime import datetime
-from app.database import Base, GUID
+
+from sqlalchemy import Column, DateTime, Float, Integer, String, Text
+
+from app.database import GUID, Base
+
 
 class SearchLog(Base):
     __tablename__ = "search_logs"

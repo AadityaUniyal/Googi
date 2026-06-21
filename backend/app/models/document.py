@@ -1,18 +1,21 @@
 import enum
 import uuid
-from sqlalchemy import Column, String, Enum, DateTime, ForeignKey, Float, Text, Boolean
-from sqlalchemy.orm import relationship
 from datetime import datetime
-from app.database import Base, GUID
 
-class DocumentStatus(str, enum.Enum):
+from sqlalchemy import Boolean, Column, DateTime, Enum, Float, ForeignKey, String, Text
+from sqlalchemy.orm import relationship
+
+from app.database import GUID, Base
+
+
+class DocumentStatus(enum.StrEnum):
     INGESTED = "INGESTED"
     PROCESSING = "PROCESSING"
     FAILED = "FAILED"
     AWAITING_REVIEW = "AWAITING_REVIEW"
     PROCESSED = "PROCESSED"
 
-class DocumentCategory(str, enum.Enum):
+class DocumentCategory(enum.StrEnum):
     INVOICE = "INVOICE"
     RFQ = "RFQ"
     PURCHASE_ORDER = "PURCHASE_ORDER"
@@ -20,7 +23,7 @@ class DocumentCategory(str, enum.Enum):
     COMPLIANCE = "COMPLIANCE"
     UNKNOWN = "UNKNOWN"
 
-class FieldValidationStatus(str, enum.Enum):
+class FieldValidationStatus(enum.StrEnum):
     VALID = "VALID"
     FLAGGED = "FLAGGED"
     MANUAL_CORRECTION = "MANUAL_CORRECTION"
@@ -37,7 +40,7 @@ class Document(Base):
     ocr_text = Column(Text, nullable=True)
     consensus_score = Column(Float, nullable=True)
     content_hash = Column(String(64), index=True, nullable=True)
-    
+
     uploaded_by = Column(GUID, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

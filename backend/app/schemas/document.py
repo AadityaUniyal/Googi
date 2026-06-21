@@ -1,20 +1,22 @@
-from pydantic import BaseModel
 from datetime import datetime
-from typing import List, Optional
 from uuid import UUID
-from app.models.document import DocumentStatus, DocumentCategory, FieldValidationStatus
+
+from pydantic import BaseModel
+
+from app.models.document import DocumentCategory, DocumentStatus, FieldValidationStatus
+
 
 class ExtractedFieldResponse(BaseModel):
     id: UUID
     field_key: str
-    extracted_value: Optional[str] = None
+    extracted_value: str | None = None
     critic_score: float
     auditor_score: float
-    consensus_value: Optional[str] = None
+    consensus_value: str | None = None
     confidence_score: float
     is_modified: bool
     validation_status: FieldValidationStatus
-    validation_notes: Optional[str] = None
+    validation_notes: str | None = None
 
     class Config:
         from_attributes = True
@@ -25,12 +27,12 @@ class DocumentResponse(BaseModel):
     file_type: str
     category: DocumentCategory
     status: DocumentStatus
-    ocr_text: Optional[str] = None
-    consensus_score: Optional[float] = None
-    uploaded_by: Optional[UUID] = None
+    ocr_text: str | None = None
+    consensus_score: float | None = None
+    uploaded_by: UUID | None = None
     created_at: datetime
     updated_at: datetime
-    fields: List[ExtractedFieldResponse] = []
+    fields: list[ExtractedFieldResponse] = []
 
     class Config:
         from_attributes = True
@@ -41,9 +43,9 @@ class DocumentSimpleResponse(BaseModel):
     file_type: str
     category: DocumentCategory
     status: DocumentStatus
-    consensus_score: Optional[float] = None
+    consensus_score: float | None = None
     created_at: datetime
-    uploader_name: Optional[str] = None
+    uploader_name: str | None = None
 
     class Config:
         from_attributes = True
@@ -53,4 +55,4 @@ class FieldUpdate(BaseModel):
     consensus_value: str
 
 class DocumentReviewSubmit(BaseModel):
-    updates: List[FieldUpdate]
+    updates: list[FieldUpdate]

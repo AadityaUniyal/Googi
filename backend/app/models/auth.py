@@ -1,10 +1,13 @@
 import enum
 import uuid
-from sqlalchemy import Column, String, Enum, DateTime
 from datetime import datetime
-from app.database import Base, GUID
 
-class UserRole(str, enum.Enum):
+from sqlalchemy import Column, DateTime, Enum, String
+
+from app.database import GUID, Base
+
+
+class UserRole(enum.StrEnum):
     ADMIN = "ADMIN"
     REVIEWER = "REVIEWER"
     OPERATOR = "OPERATOR"

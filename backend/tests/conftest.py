@@ -5,9 +5,10 @@ Provides a test database (SQLite in-memory), mock settings,
 FastAPI test client, and authenticated user fixtures.
 """
 
-import pytest
 import os
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
+
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -24,8 +25,6 @@ os.environ["DEBUG"] = "true"
 import app.database as app_db
 from app.database import Base, get_db
 from app.main import app
-from app.config import settings
-
 
 # In-memory SQLite for tests
 TEST_ENGINE = create_engine(
@@ -144,7 +143,7 @@ Bill To: Stellar Dynamics Inc.
 
 Item Description         Qty    Unit Price    Total
 Titanium Alloy Rods      50     $75.50        $3,775.00
-  
+
 Subtotal: $3,775.00
 Tax (8.25%): $311.44
 Shipping: $50.00

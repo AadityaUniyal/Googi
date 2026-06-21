@@ -7,12 +7,12 @@ request → service → agent → worker → database.
 This enables distributed tracing and debugging in production.
 """
 
-import logging
 import json
-import uuid
+import logging
 import sys
+import uuid
 from contextvars import ContextVar
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 # Context variable for trace_id propagation across async boundaries
 trace_id_var: ContextVar[str] = ContextVar("trace_id", default="no-trace")
@@ -23,7 +23,7 @@ class JSONFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         log_entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),

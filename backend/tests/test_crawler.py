@@ -1,7 +1,8 @@
-import pytest
 from sqlalchemy.orm import Session
-from app.services.crawler import normalize_url, is_allowed_by_robots, compute_pagerank
+
 from app.models.search import CrawledPage, PageLink
+from app.services.crawler import compute_pagerank, is_allowed_by_robots, normalize_url
+
 
 def test_normalize_url():
     # Test normalization cases

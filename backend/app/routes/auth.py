@@ -1,16 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
-import jwt
-from typing import List
-import bcrypt
-from uuid import UUID
 
-from app.database import get_db
+import bcrypt
+import jwt
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.orm import Session
+
 from app.config import settings
+from app.database import get_db
 from app.models.auth import User, UserRole
-from app.schemas.auth import UserCreate, UserLogin, UserResponse, Token, RefreshTokenRequest
+from app.schemas.auth import RefreshTokenRequest, Token, UserCreate, UserLogin, UserResponse
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -64,20 +63,20 @@ def get_current_user(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    
+
     token_str = None
     if credentials:
         token_str = credentials.credentials
     elif token:
         token_str = token
-        
+
     if not token_str:
         raise credentials_exception
-        
+
     try:
         payload = jwt.decode(
-            token_str, 
-            settings.JWT_SECRET_KEY, 
+            token_str,
+            settings.JWT_SECRET_KEY,
             algorithms=[settings.JWT_ALGORITHM]
         )
         user_id: str = payload.get("sub")
@@ -88,8 +87,8 @@ def get_current_user(
         if token_type != "access":
             raise credentials_exception
     except jwt.PyJWTError:
-        raise credentials_exception
-        
+        raise credentials_exception from None
+
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:
         raise credentials_exception
@@ -97,7 +96,7 @@ def get_current_user(
 
 # Helper dependency creator for RBAC verification
 class RoleChecker:
-    def __init__(self, allowed_roles: List[UserRole]):
+    def __init__(self, allowed_roles: list[UserRole]):
         self.allowed_roles = allowed_roles
 
     def __call__(self, current_user: User = Depends(get_current_user)) -> User:
@@ -118,11 +117,11 @@ def register_user(user_data: UserCreate, db: Session = Depends(get_db)):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="A user with this email address already exists.",
         )
-    
+
     # If it is the first user in the database, promote them to ADMIN
     user_count = db.query(User).count()
     assigned_role = UserRole.ADMIN if user_count == 0 else user_data.role
-    
+
     db_user = User(
         email=user_data.email,
         hashed_password=get_password_hash(user_data.password),
@@ -143,7 +142,7 @@ def login(login_data: UserLogin, db: Session = Depends(get_db)):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
-    
+
     access_token = create_access_token(user)
     refresh_token = create_refresh_token(user)
     return {
@@ -170,7 +169,7 @@ def refresh_tokens(body: RefreshTokenRequest, db: Session = Depends(get_db)):
         if user_id is None or token_type != "refresh":
             raise credentials_exception
     except jwt.PyJWTError:
-        raise credentials_exception
+        raise credentials_exception from None
 
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:

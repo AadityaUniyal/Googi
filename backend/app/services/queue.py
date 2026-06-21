@@ -1,7 +1,9 @@
-import pika
 import json
 import logging
 import threading
+
+import pika
+
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -35,11 +37,11 @@ def publish_document_event(event_type: str, document_id: str):
         "document_id": str(document_id)
     }
     message = json.dumps(payload)
-    
+
     try:
         connection = get_rabbitmq_connection()
         channel = connection.channel()
-        
+
         # Declare queue with DLX arguments (idempotent, must match worker declaration)
         channel.queue_declare(
             queue=MAIN_QUEUE,
@@ -49,7 +51,7 @@ def publish_document_event(event_type: str, document_id: str):
                 "x-dead-letter-routing-key": DLQ_QUEUE,
             },
         )
-        
+
         # Publish persistent message with retry metadata headers
         channel.basic_publish(
             exchange="",
@@ -64,13 +66,13 @@ def publish_document_event(event_type: str, document_id: str):
         )
         connection.close()
         logger.info(f"Published event '{event_type}' for document {document_id} to RabbitMQ")
-        
+
     except Exception as e:
         logger.warning(
             f"RabbitMQ is unavailable (Connection failed: {str(e)}). "
             f"Falling back to local in-process thread execution for event '{event_type}' on document {document_id}."
         )
-        
+
         # Trigger local thread worker fallback if registered
         if _local_worker_callback:
             thread = threading.Thread(

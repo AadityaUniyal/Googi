@@ -11,26 +11,23 @@ Production-grade FastAPI application with:
 """
 
 import time
-import uuid
 from contextlib import asynccontextmanager
-from typing import Dict, Any
+from typing import Any
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.config import settings
-from app.database import engine, Base
+import app.models.audit
+
 # Import all models to register with Base metadata
 import app.models.auth
 import app.models.document
-import app.models.audit
 import app.models.search
-
-from app.logging_config import (
-    setup_logging, generate_trace_id, trace_id_var, get_logger
-)
+from app.config import settings
+from app.database import Base, engine
+from app.logging_config import generate_trace_id, get_logger, setup_logging, trace_id_var
 
 logger = get_logger(__name__)
 
@@ -45,7 +42,7 @@ class MetricsCollector:
         self.request_latencies: list = []  # Keep last 1000 for percentiles
         self.documents_processed: int = 0
         self.documents_failed: int = 0
-        self.status_codes: Dict[int, int] = {}
+        self.status_codes: dict[int, int] = {}
 
     def record_request(self, duration_ms: float, status_code: int):
         self.request_count += 1
@@ -62,7 +59,7 @@ class MetricsCollector:
         idx = int(len(sorted_latencies) * p / 100)
         return sorted_latencies[min(idx, len(sorted_latencies) - 1)]
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "requests_total": self.request_count,
             "request_latency_avg_ms": round(
@@ -172,7 +169,7 @@ app.add_middleware(
 
 # ─── Include Routers ─────────────────────────────────────────────────────────
 
-from app.routes import auth, documents, review, search, analytics, streaming, crawl
+from app.routes import analytics, auth, crawl, documents, review, search, streaming  # noqa: E402
 
 app.include_router(auth.router)
 app.include_router(documents.router)
@@ -201,7 +198,7 @@ def health_check():
     Comprehensive health check that verifies connectivity to all
     backing services: PostgreSQL, Redis, RabbitMQ.
     """
-    health: Dict[str, Any] = {
+    health: dict[str, Any] = {
         "status": "healthy",
         "checks": {}
     }
@@ -218,6 +215,7 @@ def health_check():
 
     # Check Redis
     try:
+        import redis as redis_lib
         r = redis_lib.Redis(
             host=settings.REDIS_HOST,
             port=settings.REDIS_PORT,

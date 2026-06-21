@@ -9,18 +9,18 @@ Provides real-time document processing updates to the frontend:
 Uses Redis Pub/Sub as the event bus between the worker and API server.
 """
 
-import json
 import asyncio
-from typing import AsyncGenerator
+import json
+from collections.abc import AsyncGenerator
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
 from app.config import settings
-from app.routes.auth import get_current_user
-from app.models.auth import User
 from app.logging_config import get_logger
+from app.models.auth import User
+from app.routes.auth import get_current_user
 
 logger = get_logger(__name__)
 
@@ -83,7 +83,7 @@ async def _fallback_event_stream(document_id: str) -> AsyncGenerator[str, None]:
     Polls the database for status changes.
     """
     from app.database import SessionLocal
-    from app.models.document import Document, DocumentStatus
+    from app.models.document import Document
 
     yield f"data: {json.dumps({'stage': 'CONNECTED', 'message': 'Stream connected (polling mode)'})}\n\n"
 
@@ -109,8 +109,8 @@ async def _fallback_event_stream(document_id: str) -> AsyncGenerator[str, None]:
                 if last_status in ("PROCESSED", "FAILED"):
                     break
 
-        except Exception:
-            pass
+        except Exception as err:
+            logger.debug(f"SSE stream client disconnected or error: {err}")
 
         await asyncio.sleep(5)
 
@@ -178,5 +178,5 @@ def publish_pipeline_event(document_id: str, stage: str, message: str, **extra):
         event = {"stage": stage, "message": message, **extra}
         r.publish(channel, json.dumps(event))
         r.close()
-    except Exception:
-        pass  # Non-critical — SSE is best-effort
+    except Exception as err:
+        logger.debug(f"Failed to publish streaming update: {err}")  # Non-critical — SSE is best-effort

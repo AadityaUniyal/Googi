@@ -1,11 +1,12 @@
+import uuid
+
 from sqlalchemy import create_engine
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.types import CHAR, TypeDecorator
+
 from app.config import settings
 
-
-import uuid
-from sqlalchemy.types import TypeDecorator, CHAR
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
 class GUID(TypeDecorator):
     """Platform-independent GUID type.

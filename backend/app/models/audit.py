@@ -1,8 +1,11 @@
 import uuid
-from sqlalchemy import Column, String, DateTime, ForeignKey, JSON
-from sqlalchemy.orm import relationship
 from datetime import datetime
-from app.database import Base, GUID
+
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, String
+from sqlalchemy.orm import relationship
+
+from app.database import GUID, Base
+
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"

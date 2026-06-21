@@ -1,14 +1,16 @@
-from pydantic import BaseModel, EmailStr
 from datetime import datetime
-from typing import Optional
 from uuid import UUID
+
+from pydantic import BaseModel, EmailStr
+
 from app.models.auth import UserRole
+
 
 class UserCreate(BaseModel):
     email: EmailStr
     password: str
     full_name: str
-    role: Optional[UserRole] = UserRole.VIEWER
+    role: UserRole | None = UserRole.VIEWER
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -26,14 +28,14 @@ class UserResponse(BaseModel):
 
 class Token(BaseModel):
     access_token: str
-    refresh_token: Optional[str] = None
+    refresh_token: str | None = None
     token_type: str
 
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
 class TokenData(BaseModel):
-    email: Optional[str] = None
-    role: Optional[UserRole] = None
-    user_id: Optional[UUID] = None
+    email: str | None = None
+    role: UserRole | None = None
+    user_id: UUID | None = None
 

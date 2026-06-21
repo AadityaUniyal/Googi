@@ -1,11 +1,11 @@
-import os
-import time
 import asyncio
 import logging
+import os
+import time
 from concurrent.futures import ThreadPoolExecutor
-from PIL import Image
+
 import pytesseract
-from app.models.document import DocumentCategory
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -26,18 +26,18 @@ def extract_text_from_image(image_path: str) -> str:
     try:
         img = Image.open(image_path)
         return pytesseract.image_to_string(img)
-    except FileNotFoundError:
-        raise RuntimeError(f"Tesseract OCR engine not found. Ensure Tesseract is installed and on PATH.")
+    except FileNotFoundError as err:
+        raise RuntimeError("Tesseract OCR engine not found. Ensure Tesseract is installed and on PATH.") from err
     except Exception as e:
         # If tesseract is not installed, raise specific error to trigger fallback
-        raise RuntimeError(f"Tesseract extraction failed: {str(e)}")
+        raise RuntimeError(f"Tesseract extraction failed: {str(e)}") from e
 
 def get_high_fidelity_mock_text(filename: str) -> str:
     """
     Returns realistic OCR text layout depending on file keyword indicators.
     """
     fn = filename.lower()
-    
+
     if "invoice" in fn or "inv" in fn:
         return """
 =========================================
@@ -73,7 +73,7 @@ TOTAL AMOUNT DUE: $4136.44
 Thank you for your business!
 Please send payments via wire transfer to Bank of Tech, Account Ref: 9812-401.
         """
-        
+
     elif "rfq" in fn or "quote" in fn:
         return """
 ==================================================
@@ -110,7 +110,7 @@ Dock 4A, Chicago, IL 60607
 Estimated Shipping Schedule: Required by August 15, 2026.
 ==================================================
         """
-        
+
     elif "contract" in fn or "agreement" in fn or "legal" in fn:
         return """
 MASTER SERVICES AGREEMENT
@@ -132,7 +132,7 @@ Signed:
 /s/ Robert Chen, CEO, Apex Media Ventures
 /s/ Sarah Jenkins, President, Stellar Tech Consultants
         """
-        
+
     elif "compliance" in fn or "certificate" in fn or "iso" in fn:
         return """
 CERTIFICATE OF CONFORMANCE
@@ -159,10 +159,10 @@ Authorized Signatory:
 Dr. Angela Martinez, VP of Quality Assurance
 Global Foundry Parts Inc.
         """
-        
+
     else:
         # General purchase order or fallback
-        return f"""
+        return """
 PURCHASE ORDER: PO-772831
 Date: June 18, 2026
 Vendor: Supply Chain Logistics Corp
@@ -185,11 +185,11 @@ def perform_ocr(file_path: str, filename: str, file_type: str) -> str:
     Used by the background worker which runs in its own thread.
     """
     time.sleep(1.0)  # Simulate processing latency
-    
+
     # 1. Plain text file - just read directly
     if file_type == "TXT":
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 return f.read()
         except Exception as e:
             return f"Error reading text file: {str(e)}"
@@ -202,7 +202,7 @@ def perform_ocr(file_path: str, filename: str, file_type: str) -> str:
             logger.warning(f"Tesseract OCR failed for {filename}: {exc}. Falling back to mock text.")
             # Fall back to high-fidelity mock
             return get_high_fidelity_mock_text(filename)
-            
+
     # 3. PDF/DOCX or others - Fallback to high-fidelity mock text directly
     return get_high_fidelity_mock_text(filename)
 
@@ -224,5 +224,5 @@ async def perform_ocr_async(file_path: str, filename: str, file_type: str) -> st
         return result
     except Exception as e:
         logger.error(f"Async OCR failed for {filename}: {e}")
-        raise RuntimeError(f"OCR processing failed: {str(e)}")
+        raise RuntimeError(f"OCR processing failed: {str(e)}") from e
 

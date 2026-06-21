@@ -1,5 +1,6 @@
 import logging
-from typing import Dict, Any
+from typing import Any
+
 from app.models.document import DocumentCategory
 
 logger = logging.getLogger(__name__)
@@ -7,14 +8,14 @@ logger = logging.getLogger(__name__)
 # Tolerance threshold: differences below 0.5% of the total are treated as minor rounding
 TOLERANCE_THRESHOLD = 0.005
 
-def run_auditor_agent(category: DocumentCategory, extracted_fields: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+def run_auditor_agent(category: DocumentCategory, extracted_fields: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """
     Auditor Agent: Performs deterministic mathematical auditing and logical checks.
     Uses graduated scoring instead of binary pass/fail.
     Returns: { field_key: { "score": float, "notes": str } }
     """
     audits = {}
-    
+
     # Pre-populate all fields with 1.0 (Passed audit)
     for key in extracted_fields.keys():
         audits[key] = {
@@ -29,15 +30,15 @@ def run_auditor_agent(category: DocumentCategory, extracted_fields: Dict[str, An
             tax = float(str(extracted_fields.get("tax", 0)).replace("$", "").replace(",", ""))
             shipping = float(str(extracted_fields.get("shipping", 0)).replace("$", "").replace(",", ""))
             total = float(str(extracted_fields.get("total_amount", 0)).replace("$", "").replace(",", ""))
-            
+
             calculated_total = subtotal + tax + shipping
             difference = abs(calculated_total - total)
-            
+
             # Calculate the percentage delta relative to the stated total
             pct_delta = (difference / total) if total != 0 else float("inf")
-            
+
             math_fields = ["subtotal", "tax", "shipping", "total_amount"]
-            
+
             if difference <= 0.05:
                 # Perfect match (within penny rounding)
                 success_msg = f"Audit Verified: {subtotal} + {tax} + {shipping} matches total of {total}"
@@ -83,7 +84,7 @@ def run_auditor_agent(category: DocumentCategory, extracted_fields: Dict[str, An
                         "score": 0.0,
                         "notes": err_msg
                     }
-                    
+
     elif category == DocumentCategory.RFQ:
         # Verify quantity is a valid positive integer
         qty_str = str(extracted_fields.get("quantity", "0"))
@@ -110,6 +111,6 @@ def run_auditor_agent(category: DocumentCategory, extracted_fields: Dict[str, An
                 "score": 0.0,
                 "notes": f"Failed to parse quantity as integer: {qty_str}"
             }
-            
+
     return audits
 

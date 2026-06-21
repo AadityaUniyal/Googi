@@ -1,7 +1,8 @@
-import pytest
 from sqlalchemy.orm import Session
-from app.routes.search import parse_facets, generate_snippet
+
 from app.models.search import SearchLog
+from app.routes.search import generate_snippet, parse_facets
+
 
 def test_parse_facets():
     # Test type extraction
@@ -21,7 +22,7 @@ def test_parse_facets():
 
 def test_generate_snippet():
     text = "The total balance due for this statement is $145.50. Please send the payment to ACME Corp. The billing date is June 21, 2026."
-    
+
     # Matching terms
     snippet1 = generate_snippet(text, "payment ACME")
     assert "<mark>payment</mark>" in snippet1 or "<mark>Payment</mark>" in snippet1
@@ -37,7 +38,7 @@ def test_search_suggest_route(client, db_session: Session, auth_headers):
     log1 = SearchLog(query_text="invoice total due", results_count=3, latency_ms=10)
     log2 = SearchLog(query_text="invoice status approved", results_count=1, latency_ms=5)
     log3 = SearchLog(query_text="contract Gov law", results_count=2, latency_ms=8)
-    
+
     db_session.add_all([log1, log2, log3])
     db_session.commit()
 

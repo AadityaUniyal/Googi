@@ -8,14 +8,14 @@ Tests cover:
 - Vector store service (document indexing, search)
 """
 
-import pytest
-import os
-import tempfile
-from unittest.mock import patch, MagicMock, AsyncMock
-from app.services.storage import save_uploaded_file
-from app.services.ocr import perform_ocr
-from app.models.document import DocumentCategory
+from unittest.mock import MagicMock, patch
 
+import pytest
+from fastapi import HTTPException
+
+from app.models.document import DocumentCategory
+from app.services.ocr import perform_ocr
+from app.services.storage import save_uploaded_file
 
 # ─── Storage Service Tests ───────────────────────────────────────────────────
 
@@ -47,7 +47,7 @@ class TestStorageService:
 
         with patch("app.services.storage.settings") as mock_settings:
             mock_settings.UPLOAD_DIR = str(tmp_path)
-            with pytest.raises(Exception):
+            with pytest.raises(HTTPException):
                 save_uploaded_file(mock_file)
 
 

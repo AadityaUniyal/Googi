@@ -1,16 +1,18 @@
 import json
 import logging
 import time
+
 import pika
 from sqlalchemy.orm import Session
+
+from app.agents.consensus import run_agent_consensus
 from app.config import settings
 from app.database import SessionLocal
-from app.models.document import Document, DocumentStatus, DocumentCategory, ExtractedField
 from app.models.audit import AuditLog
+from app.models.document import Document, DocumentCategory, DocumentStatus, ExtractedField
 from app.services.ocr import perform_ocr
-from app.services.vector_store import add_document_to_vector_store
-from app.agents.consensus import run_agent_consensus
 from app.services.queue import register_local_worker_callback
+from app.services.vector_store import add_document_to_vector_store
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -28,7 +30,7 @@ def classify_document(filename: str, ocr_text: str) -> DocumentCategory:
     """
     fn = filename.lower()
     text = ocr_text.lower()
-    
+
     if "invoice" in fn or "inv" in fn or "billing" in text or "total amount due" in text:
         return DocumentCategory.INVOICE
     elif "rfq" in fn or "quote" in fn or "request for quotation" in text:
@@ -37,7 +39,7 @@ def classify_document(filename: str, ocr_text: str) -> DocumentCategory:
         return DocumentCategory.CONTRACT
     elif "compliance" in fn or "certificate" in fn or "conformance" in text or "rohs" in text:
         return DocumentCategory.COMPLIANCE
-        
+
     return DocumentCategory.UNKNOWN
 
 def process_document(document_id: str):
@@ -53,7 +55,7 @@ def process_document(document_id: str):
             return
 
         logger.info(f"Worker processing document {doc.id} ({doc.filename})...")
-        
+
         # 1. Update status
         doc.status = DocumentStatus.PROCESSING
         db.commit()
@@ -73,11 +75,11 @@ def process_document(document_id: str):
         # 4. Run Multi-Agent Consensus Validation
         import asyncio
         consensus = asyncio.run(run_agent_consensus(ocr_result, category))
-        
+
         # Save Extracted Fields
         # Remove any existing fields first (in case of re-processing)
         db.query(ExtractedField).filter(ExtractedField.document_id == doc.id).delete()
-        
+
         for field in consensus["fields"]:
             db_field = ExtractedField(
                 document_id=doc.id,
@@ -92,19 +94,19 @@ def process_document(document_id: str):
                 validation_notes=field["validation_notes"]
             )
             db.add(db_field)
-            
+
         doc.consensus_score = consensus["overall_score"]
-        
+
         # 5. Check if any fields were FLAGGED or score is low to determine review requirement
         has_flagged_fields = any(f["validation_status"] == "FLAGGED" for f in consensus["fields"])
-        
+
         if consensus["overall_score"] >= 0.85 and not has_flagged_fields:
             doc.status = DocumentStatus.PROCESSED
             logger.info(f"Document {doc.id} approved automatically (Score: {doc.consensus_score:.2%})")
         else:
             doc.status = DocumentStatus.AWAITING_REVIEW
             logger.info(f"Document {doc.id} flagged for human review (Score: {doc.consensus_score:.2%})")
-            
+
         db.commit()
 
         # 6. Index in Vector Store
@@ -138,8 +140,8 @@ def process_document(document_id: str):
             if doc:
                 doc.status = DocumentStatus.FAILED
                 db.commit()
-        except Exception:
-            pass
+        except Exception as err:
+            logger.error(f"Failed to set document status to FAILED: {err}")
         # Re-raise so that the RabbitMQ callback can handle retries
         raise
     finally:
@@ -193,10 +195,10 @@ def rabbitmq_worker_main():
             )
             connection = pika.BlockingConnection(parameters)
             channel = connection.channel()
-            
+
             # Graceful shutdown handler
             import signal
-            def handle_shutdown(signum, frame):
+            def handle_shutdown(signum, frame, channel=channel, connection=connection):
                 logger.info("Received termination signal. Shutting down worker gracefully...")
                 try:
                     if channel.is_open:
@@ -207,7 +209,7 @@ def rabbitmq_worker_main():
                     logger.error(f"Error during shutdown: {ex}")
             signal.signal(signal.SIGTERM, handle_shutdown)
             signal.signal(signal.SIGINT, handle_shutdown)
-            
+
             # Declare dead-letter exchange & queue
             channel.exchange_declare(exchange=DLX_EXCHANGE, exchange_type="direct", durable=True)
             channel.queue_declare(queue=DLQ_QUEUE, durable=True)
@@ -223,7 +225,7 @@ def rabbitmq_worker_main():
                 },
             )
             channel.basic_qos(prefetch_count=1)
-            
+
             def on_message_callback(ch, method, properties, body):
                 retry_count = _get_retry_count(properties)
                 try:
@@ -252,11 +254,11 @@ def rabbitmq_worker_main():
                                 headers=dict(properties.headers) if properties.headers else {"x-retry-count": retry_count},
                             ),
                         )
-            
+
             channel.basic_consume(queue=MAIN_QUEUE, on_message_callback=on_message_callback)
             logger.info("Worker daemon connected to RabbitMQ. Listening for messages...")
             channel.start_consuming()
-            
+
         except pika.exceptions.AMQPConnectionError:
             logger.warning("RabbitMQ connection refused. Re-trying in 5 seconds...")
             time.sleep(5)

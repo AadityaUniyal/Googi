@@ -1,7 +1,9 @@
+import logging
 import os
 import uuid
-import logging
-from fastapi import UploadFile, HTTPException, status
+
+from fastapi import HTTPException, UploadFile, status
+
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -54,8 +56,8 @@ def _detect_mime_from_path(file_path: str) -> str | None:
         for sig, mime_type in _FILE_SIGNATURES:
             if header.startswith(sig):
                 return mime_type
-    except Exception:
-        pass
+    except Exception as err:
+        logger.warning(f"Manual header signature detection failed: {err}")
 
     return None
 
@@ -127,7 +129,7 @@ def save_uploaded_file(file: UploadFile) -> dict:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to save file: {str(e)}"
-        )
+        ) from e
 
     # Validate MIME type matches the claimed extension
     _validate_mime_type(dest_path, ext)
@@ -144,6 +146,6 @@ def delete_stored_file(file_path: str):
     if os.path.exists(file_path):
         try:
             os.remove(file_path)
-        except Exception:
-            pass
+        except Exception as err:
+            logger.warning(f"Failed to delete file {file_path}: {err}")
 

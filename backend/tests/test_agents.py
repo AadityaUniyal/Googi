@@ -9,15 +9,16 @@ Tests cover:
 - Consensus engine (weighted scoring, category-aware weights)
 """
 
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, MagicMock
-from app.agents.extractor import run_extractor_agent
-from app.agents.critic import run_critic_agent
+
 from app.agents.auditor import run_auditor_agent
 from app.agents.compliance import run_compliance_agent
 from app.agents.consensus import run_agent_consensus
+from app.agents.critic import run_critic_agent
+from app.agents.extractor import run_extractor_agent
 from app.models.document import DocumentCategory, FieldValidationStatus
-
 
 # ─── Extractor Agent Tests ───────────────────────────────────────────────────
 

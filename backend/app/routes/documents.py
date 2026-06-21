@@ -1,19 +1,18 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status, Query
+import hashlib
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from typing import List, Optional
-from uuid import UUID
-import hashlib
-import os
 
 from app.database import get_db
-from app.models.auth import User, UserRole
-from app.models.document import Document, DocumentStatus, DocumentCategory, ExtractedField
 from app.models.audit import AuditLog
-from app.routes.auth import get_current_user, RoleChecker
-from app.services.storage import save_uploaded_file, delete_stored_file
-from app.services.queue import publish_document_event
+from app.models.auth import User, UserRole
+from app.models.document import Document, DocumentCategory, DocumentStatus
+from app.routes.auth import RoleChecker
 from app.schemas.document import DocumentResponse, DocumentSimpleResponse
+from app.services.queue import publish_document_event
+from app.services.storage import delete_stored_file, save_uploaded_file
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
@@ -30,7 +29,7 @@ async def upload_document(
 ):
     # Save the file locally using storage service
     storage_data = save_uploaded_file(file)
-    
+
     try:
         # Compute SHA-256 hash of saved file content
         sha256 = hashlib.sha256()
@@ -38,7 +37,7 @@ async def upload_document(
             for chunk in iter(lambda: f.read(8192), b""):
                 sha256.update(chunk)
         content_hash = sha256.hexdigest()
-        
+
         # Check for duplicate upload
         existing_doc = db.query(Document).filter(Document.content_hash == content_hash).first()
         if existing_doc:
@@ -72,7 +71,7 @@ async def upload_document(
         db.add(db_doc)
         db.commit()
         db.refresh(db_doc)
-        
+
         # Write Ingestion Audit Log
         audit = AuditLog(
             document_id=db_doc.id,
@@ -87,13 +86,13 @@ async def upload_document(
         )
         db.add(audit)
         db.commit()
-        
+
         # Enqueue document processing event
         publish_document_event("document.uploaded", db_doc.id)
-        
+
         # Reload to ensure relationships are loaded
         return db.query(Document).filter(Document.id == db_doc.id).first()
-        
+
     except Exception as e:
         if not isinstance(e, HTTPException) and not hasattr(e, "status_code"):
             # Clean up file in case of database registration errors
@@ -101,13 +100,13 @@ async def upload_document(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to record document upload: {str(e)}"
-        )
+        ) from e
 
 # List all documents
-@router.get("", response_model=List[DocumentSimpleResponse])
+@router.get("", response_model=list[DocumentSimpleResponse])
 def list_documents(
-    category: Optional[DocumentCategory] = None,
-    status: Optional[DocumentStatus] = None,
+    category: DocumentCategory | None = None,
+    status: DocumentStatus | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(any_user)
 ):
@@ -116,9 +115,9 @@ def list_documents(
         query = query.filter(Document.category == category)
     if status:
         query = query.filter(Document.status == status)
-        
+
     documents = query.order_by(Document.created_at.desc()).all()
-    
+
     # Format simple response containing uploader's name
     results = []
     for doc in documents:
@@ -133,7 +132,7 @@ def list_documents(
             "created_at": doc.created_at,
             "uploader_name": uploader_name
         })
-        
+
     return results
 
 # Get single document details
@@ -158,10 +157,10 @@ def reprocess_document(
     doc = db.query(Document).filter(Document.id == document_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-        
+
     doc.status = DocumentStatus.INGESTED
     db.commit()
-    
+
     # Audit reprocessing action
     audit = AuditLog(
         document_id=doc.id,
@@ -171,7 +170,7 @@ def reprocess_document(
     )
     db.add(audit)
     db.commit()
-    
+
     # Re-publish processing event
     publish_document_event("document.reprocess", doc.id)
     return doc
@@ -186,10 +185,10 @@ def delete_document(
     doc = db.query(Document).filter(Document.id == document_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-        
+
     # Delete local file
     delete_stored_file(doc.file_path)
-    
+
     # Create audit trail record before deletion (set document_id to None in table after deletion cascade)
     audit = AuditLog(
         user_id=current_user.id,
@@ -197,7 +196,7 @@ def delete_document(
         details={"deleted_filename": doc.filename, "document_id": str(doc.id)}
     )
     db.add(audit)
-    
+
     # Database cascade deletes extracted fields automatically
     db.delete(doc)
     db.commit()

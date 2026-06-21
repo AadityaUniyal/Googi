@@ -1,18 +1,17 @@
+import logging
+from uuid import UUID
+
+import redis
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import List, Optional
-from uuid import UUID
-from datetime import datetime, timedelta
-import redis
-import logging
 
+from app.config import settings
 from app.database import get_db
+from app.models.audit import AuditLog
 from app.models.auth import User, UserRole
 from app.models.document import Document, DocumentStatus, ExtractedField, FieldValidationStatus
-from app.models.audit import AuditLog
-from app.routes.auth import get_current_user, RoleChecker
+from app.routes.auth import RoleChecker
 from app.schemas.document import DocumentResponse, DocumentReviewSubmit, DocumentSimpleResponse
-from app.config import settings
 
 router = APIRouter(prefix="/api/review", tags=["review"])
 
@@ -41,7 +40,7 @@ def get_redis_client() -> redis.Redis:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Redis is unavailable — document locking requires Redis. Error: {exc}",
-        )
+        ) from exc
 
 
 def acquire_document_lock(document_id: str, username: str) -> bool:
@@ -67,20 +66,20 @@ def release_document_lock(document_id: str):
     r.delete(lock_key)
 
 
-def get_lock_holder(document_id: str) -> Optional[str]:
+def get_lock_holder(document_id: str) -> str | None:
     lock_key = f"lock:document:{document_id}"
     r = get_redis_client()
     return r.get(lock_key)
 
 
 # Get Review Queue
-@router.get("/queue", response_model=List[DocumentSimpleResponse])
+@router.get("/queue", response_model=list[DocumentSimpleResponse])
 def get_review_queue(
     db: Session = Depends(get_db),
     current_user: User = Depends(reviewer_or_admin)
 ):
     documents = db.query(Document).filter(Document.status == DocumentStatus.AWAITING_REVIEW).order_by(Document.created_at.asc()).all()
-    
+
     results = []
     for doc in documents:
         uploader_name = doc.uploader.full_name if doc.uploader else "System"
@@ -89,7 +88,7 @@ def get_review_queue(
             lock_holder = get_lock_holder(str(doc.id))
         except HTTPException:
             lock_holder = None
-        
+
         results.append({
             "id": doc.id,
             "filename": doc.filename,
@@ -166,7 +165,7 @@ def submit_review(
     current_user: User = Depends(reviewer_or_admin)
 ):
     doc_id_str = str(document_id)
-    
+
     # Check if locked by someone else
     holder = get_lock_holder(doc_id_str)
     if holder and holder != current_user.full_name:
@@ -174,42 +173,42 @@ def submit_review(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"This document is locked by {holder}. Please unlock it first."
         )
-        
+
     doc = db.query(Document).filter(Document.id == document_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-        
+
     # Apply changes and calculate before/after difference for audit logs
     diffs = {}
-    
+
     for update in review_data.updates:
         field = db.query(ExtractedField).filter(
             ExtractedField.document_id == document_id,
             ExtractedField.field_key == update.field_key
         ).first()
-        
+
         if field:
             before_val = field.consensus_value
             after_val = update.consensus_value
-            
+
             if before_val != after_val:
                 field.consensus_value = after_val
                 field.is_modified = True
                 field.validation_status = FieldValidationStatus.MANUAL_CORRECTION
                 field.confidence_score = 1.0  # Set to 100% since human corrected it
-                
+
                 diffs[update.field_key] = {
                     "before": before_val,
                     "after": after_val
                 }
-                
+
     # Update document status to PROCESSED
     doc.status = DocumentStatus.PROCESSED
     db.commit()
-    
+
     # Release Lock
     release_document_lock(doc_id_str)
-    
+
     # Write Correction Audit Log
     if diffs:
         audit = AuditLog(
@@ -223,7 +222,7 @@ def submit_review(
         )
         db.add(audit)
         db.commit()
-        
+
     # Reload document
     db.refresh(doc)
     return doc
