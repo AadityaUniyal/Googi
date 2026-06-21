@@ -90,7 +90,39 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   });
 
   if (response.status === 401) {
+    const refreshToken = localStorage.getItem("doc_intel_refresh_token");
+    // Prevent infinite loop if the refresh endpoint itself returns 401
+    if (refreshToken && path !== "/api/auth/refresh" && path !== "/api/auth/login") {
+      try {
+        const refreshResponse = await fetch(`${API_BASE_URL}/api/auth/refresh`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        });
+        if (refreshResponse.ok) {
+          const data = await refreshResponse.json();
+          localStorage.setItem("doc_intel_token", data.access_token);
+          localStorage.setItem("doc_intel_refresh_token", data.refresh_token);
+          
+          // Retry the request with the new access token
+          headers.set("Authorization", `Bearer ${data.access_token}`);
+          const retryResponse = await fetch(`${API_BASE_URL}${path}`, {
+            ...options,
+            headers,
+          });
+          if (retryResponse.ok) {
+            if (retryResponse.status === 204) return null as any;
+            return retryResponse.json() as Promise<T>;
+          }
+        }
+      } catch (err) {
+        console.error("Token refresh failed:", err);
+      }
+    }
+    
+    // If refresh fails, clear tokens and reload
     localStorage.removeItem("doc_intel_token");
+    localStorage.removeItem("doc_intel_refresh_token");
     window.location.reload();
     throw new Error("Unauthorized");
   }
@@ -109,7 +141,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export const api = {
   // Authentication
-  login: async (email: string, password: string): Promise<{ access_token: string; token_type: string }> => {
+  login: async (email: string, password: string): Promise<{ access_token: string; refresh_token: string; token_type: string }> => {
     return request("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
@@ -125,6 +157,13 @@ export const api = {
 
   getMe: async (): Promise<UserResponse> => {
     return request("/api/auth/me");
+  },
+
+  refreshToken: async (refreshToken: string): Promise<{ access_token: string; refresh_token: string; token_type: string }> => {
+    return request("/api/auth/refresh", {
+      method: "POST",
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
   },
 
   // Documents
@@ -227,5 +266,10 @@ export const api = {
 
   getAuditLogs: async (limit: number = 50): Promise<AuditLogResponse[]> => {
     return request(`/api/analytics/audit-logs?limit=${limit}`);
+  },
+
+  // Health
+  getHealth: async (): Promise<any> => {
+    return request("/health");
   }
 };

@@ -26,9 +26,14 @@ class UserResponse(BaseModel):
 
 class Token(BaseModel):
     access_token: str
+    refresh_token: Optional[str] = None
     token_type: str
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
 
 class TokenData(BaseModel):
     email: Optional[str] = None
     role: Optional[UserRole] = None
     user_id: Optional[UUID] = None
+

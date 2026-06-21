@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 from app.models.document import DocumentCategory, FieldValidationStatus
 from app.agents.extractor import run_extractor_agent
 from app.agents.critic import run_critic_agent
@@ -8,6 +8,16 @@ from app.agents.compliance import run_compliance_agent
 
 logger = logging.getLogger(__name__)
 
+# Category-aware agent weight configuration: (critic, auditor, compliance)
+WEIGHT_CONFIG: Dict[DocumentCategory, Tuple[float, float, float]] = {
+    DocumentCategory.INVOICE:        (0.3, 0.5, 0.2),  # Math matters most
+    DocumentCategory.CONTRACT:       (0.3, 0.1, 0.6),  # Compliance matters most
+    DocumentCategory.COMPLIANCE:     (0.2, 0.1, 0.7),  # Compliance critical
+    DocumentCategory.RFQ:            (0.5, 0.3, 0.2),  # Accuracy matters most
+    DocumentCategory.PURCHASE_ORDER: (0.4, 0.4, 0.2),  # Balanced
+    DocumentCategory.UNKNOWN:        (0.5, 0.3, 0.2),  # Default
+}
+
 def run_agent_consensus(ocr_text: str, category: DocumentCategory) -> Dict[str, Any]:
     """
     Orchestrates the multi-agent consensus system:
@@ -15,7 +25,7 @@ def run_agent_consensus(ocr_text: str, category: DocumentCategory) -> Dict[str, 
     2. Critic Agent verifies presence/accuracy.
     3. Auditor Agent checks math logic.
     4. Compliance Agent evaluates regulatory checklist.
-    5. Computes a field-level consensus score and notes.
+    5. Computes a field-level consensus score using category-aware weights.
     """
     logger.info(f"Starting multi-agent consensus validation for category: {category.value}")
     
@@ -35,7 +45,12 @@ def run_agent_consensus(ocr_text: str, category: DocumentCategory) -> Dict[str, 
     compliance_results = run_compliance_agent(ocr_text, category, extracted_fields)
     logger.info("Compliance Agent verification completed")
     
-    # 5. Consensus Calculation
+    # 5. Consensus Calculation with category-aware weights
+    w_critic, w_auditor, w_compliance = WEIGHT_CONFIG.get(
+        category, WEIGHT_CONFIG[DocumentCategory.UNKNOWN]
+    )
+    logger.info(f"Using weights — critic: {w_critic}, auditor: {w_auditor}, compliance: {w_compliance}")
+
     field_reports = []
     total_confidence = 0.0
     
@@ -48,9 +63,8 @@ def run_agent_consensus(ocr_text: str, category: DocumentCategory) -> Dict[str, 
         auditor_score = auditor_eval["score"]
         compliance_score = compliance_eval["score"]
         
-        # Weighted Confidence Score Calculation
-        # Critic (50%), Auditor (30%), Compliance (20%)
-        confidence = (critic_score * 0.5) + (auditor_score * 0.3) + (compliance_score * 0.2)
+        # Weighted Confidence Score Calculation (category-aware)
+        confidence = (critic_score * w_critic) + (auditor_score * w_auditor) + (compliance_score * w_compliance)
         
         # Determine status and compile notes
         notes_list = []
@@ -89,3 +103,4 @@ def run_agent_consensus(ocr_text: str, category: DocumentCategory) -> Dict[str, 
         "overall_score": overall_score,
         "fields": field_reports
     }
+

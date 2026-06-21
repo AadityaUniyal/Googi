@@ -1,0 +1,998 @@
+================================================================================
+      DocIntel AI — GOOGLE-LEVEL RESUME PROJECT AUDIT
+      Prepared by: Strict Google HR / Senior SWE Lens
+      Verdict Mode: BRUTAL. HONEST. ACTIONABLE.
+================================================================================
+
+EXECUTIVE SUMMARY
+-----------------
+DocIntel AI is legitimately one of the stronger student/portfolio projects I've
+reviewed. It checks real distributed-systems boxes that most candidates fake with
+toy REST APIs. HOWEVER — and this is critical — as it currently stands, it would
+NOT make it past Google's resume screen. Why? Because the gap between
+"architecturally described" and "production-engineered" is enormous, and Google's
+L3/L4 bar demands evidence of the latter. This document breaks down every gap,
+bug surface, missing engineering discipline, and upgrade path needed to make this
+project genuinely competitive.
+
+--------------------------------------------------------------------------------
+SECTION 1: WHAT YOU ACTUALLY HAVE (Credit Where It's Due)
+--------------------------------------------------------------------------------
+
+REAL STRENGTHS:
+  - Event-driven architecture with RabbitMQ (not a REST-polling anti-pattern)
+  - Multi-agent consensus design (shows awareness of LLM unreliability)
+  - Separation of concerns: routes / services / agents / worker layers
+  - Human-in-the-Loop with Redis-backed concurrency locking
+  - ChromaDB for vector search + RAG — this is genuinely modern
+  - Heuristic fallback when Gemini API key is absent (graceful degradation)
+  - Deterministic math audit agent (Auditor) — shows you know LLMs hallucinate
+  - Neon PostgreSQL (serverless, connection pooling) — production mindset
+  - Dual search modes: structured SQL + semantic vector
+  - Docker Compose for infrastructure orchestration
+
+WHAT THIS TELLS A GOOGLE INTERVIEWER:
+  You understand distributed systems vocabulary, async pipelines, and AI
+  limitations. That's the ceiling of the current version. Now the floor:
+
+--------------------------------------------------------------------------------
+SECTION 2: CRITICAL BUGS & BROKEN DESIGN DECISIONS
+--------------------------------------------------------------------------------
+
+BUG #1 — REDIS FALLBACK IS A CONCURRENCY TIME BOMB
+  Location: HITL Review Portal concurrency locking
+  Issue: "Redis-backed session locker WITH in-memory dict fallbacks"
+  Why it's a bug: In a distributed setup (even 2 worker instances), the
+  in-memory dict fallback means Worker A and Worker B have SEPARATE dicts.
+  Two reviewers CAN lock the same document simultaneously. Data corruption
+  guaranteed under concurrent load.
+  Fix: Redis must be the ONLY lock. Remove the fallback dict entirely.
+  Use SET NX EX (atomic set-if-not-exists with TTL). Add lock heartbeat
+  renewal so a reviewer doesn't lose their lock mid-edit.
+
+BUG #2 — RABBITMQ CONSUMER HAS NO DEAD-LETTER QUEUE
+  Location: worker.py (RabbitMQ consumer)
+  Issue: If OCR crashes, Gemini times out, or the DB write fails mid-pipeline,
+  the message is either lost (auto-ack) or requeued infinitely (nack loop).
+  Fix: Configure a Dead-Letter Exchange (DLX). Failed messages after N retries
+  go to a dead-letter queue for inspection, not into an infinite retry loop
+  that hammers your OCR and Gemini services.
+
+BUG #3 — CONSENSUS WEIGHTS ARE HARDCODED MAGIC NUMBERS
+  Location: Multi-Agent Consensus Engine
+  Issue: Critic=50%, Auditor=30%, Compliance=20% are baked in as constants.
+  This means a compliance-critical legal document is scored the same as an
+  invoice. A contract with bad math passes if Critic is happy. The weights
+  must be DOCUMENT-TYPE AWARE.
+  Fix: Build a WeightConfig schema per document category stored in the DB.
+  Let the Classifier's output feed into weight selection before consensus runs.
+
+BUG #4 — AUDITOR AGENT ZERO-SCORE OVERRIDE IS TOO BLUNT
+  Location: Auditor Agent
+  Issue: "If math fails, override score to 0.0" — this sends ALL math-broken
+  docs to human review regardless of severity. A $0.01 rounding error in a
+  $10M invoice gets the same treatment as a completely fabricated total.
+  Fix: Grade math failures by magnitude. Add a tolerance_threshold config
+  (e.g., delta < 0.5% of total = WARNING not FAIL). Assign a graduated
+  score reduction instead of a binary zero.
+
+BUG #5 — NO IDEMPOTENCY ON DOCUMENT UPLOADS
+  Location: Ingestion route
+  Issue: If a user uploads the same file twice (network retry, double-click),
+  you'll process it twice, create two DB records, two ChromaDB embeddings,
+  two audit log entries. Classic distributed systems mistake.
+  Fix: Hash the file content (SHA-256) on ingestion. Check the hash against
+  existing records before creating a new document entry. Return the existing
+  document ID if it's a duplicate.
+
+BUG #6 — TESSERACT OCR IS BLOCKING THE WORKER THREAD
+  Location: services/ocr.py (assumed pytesseract usage)
+  Issue: pytesseract.image_to_string() is a synchronous subprocess call.
+  Running this inside an async FastAPI route or a RabbitMQ callback blocks
+  the event loop or the consumer thread entirely.
+  Fix: Wrap Tesseract calls in asyncio.run_in_executor() with a ThreadPoolExecutor
+  in async contexts. In the worker, use a process pool for CPU-bound OCR work.
+
+BUG #7 — JWT AUTHENTICATION HAS NO REFRESH TOKEN MECHANISM
+  Location: PyJWT auth routes
+  Issue: README mentions PyJWT for auth. Standard mistake: access tokens
+  expire, no refresh token = users get logged out mid-review session, losing
+  unsaved human-review edits.
+  Fix: Implement a dual-token system. Short-lived access token (15 min) +
+  long-lived refresh token (7 days) stored as HttpOnly cookie. Refresh endpoint
+  rotates the refresh token on use (prevents replay attacks).
+
+BUG #8 — CHROMADB IS RUNNING EPHEMERAL / IN-MEMORY BY DEFAULT
+  Location: services/vector_store.py
+  Issue: ChromaDB's default mode is in-memory. Every backend restart nukes
+  ALL your vector embeddings. All indexed documents are gone.
+  Fix: Configure ChromaDB with a persistent directory path:
+  `chromadb.PersistentClient(path="./chroma_store")` and add this path
+  to Docker volumes. OR migrate to a managed vector DB (Pinecone, Weaviate Cloud,
+  Qdrant Cloud) for a production-credible story.
+
+BUG #9 — THE POWERSHELL LAUNCH SCRIPT IS WINDOWS-ONLY
+  Location: start_platform.ps1
+  Issue: This immediately signals "I only tested on my own machine." Any
+  Google engineer on macOS or Linux (which is everyone) cannot run this.
+  Fix: Add a Makefile with `make dev` target. Add a shell script equivalent.
+  Better: replace both with a proper docker-compose.override.yml that starts
+  ALL services (backend + worker + frontend) in containers.
+
+BUG #10 — NO INPUT SANITIZATION ON FILE UPLOAD
+  Location: Ingestion route
+  Issue: What file types are actually validated? MIME type spoofing is trivial.
+  A user renames a .exe to .pdf and uploads it. Does your OCR pipeline crash?
+  Does it execute? Does it store a malicious file?
+  Fix: Validate MIME type using python-magic (not just file extension).
+  Enforce max file size limits. Scan uploaded files in an isolated subprocess.
+  Store uploads OUTSIDE the web root so they're never directly served.
+
+--------------------------------------------------------------------------------
+SECTION 3: MISSING ENGINEERING DISCIPLINES (Google Will Ask About These)
+--------------------------------------------------------------------------------
+
+MISSING #1 — ZERO TEST COVERAGE THAT MATTERS
+  You have `tests/` directory mentioned but with "automated test scripts (pytest)".
+  Google needs to see:
+  - Unit tests for each Agent (mock LLM responses, test consensus logic)
+  - Integration tests for the full pipeline (upload → OCR → classify → consensus)
+  - Contract tests for the RabbitMQ message schema
+  - A test coverage badge in the README (target: >80%)
+  - Mocked Gemini API calls (no real API calls in tests)
+  Without this, "tests/" is just a folder. Add pytest-cov, pytest-asyncio,
+  and respx (for mocking HTTP calls to Gemini).
+
+MISSING #2 — NO OBSERVABILITY / MONITORING
+  Google's production systems have three pillars: Logs, Metrics, Traces.
+  You have: none of these configured.
+  Add:
+  - Structured JSON logging with correlation IDs (every request and every
+    message gets a trace_id that flows through the entire pipeline)
+  - Prometheus metrics endpoint on FastAPI (/metrics) — track documents
+    processed/min, agent latency p50/p95/p99, consensus score distribution
+  - Optional but impressive: OpenTelemetry traces showing OCR → Classify →
+    Agent1 → Agent2 → Agent3 → Consensus → DB write as a trace waterfall
+
+MISSING #3 — NO RATE LIMITING OR BACKPRESSURE
+  What happens if 1000 documents are uploaded simultaneously?
+  - RabbitMQ queue grows unbounded
+  - Worker spawns unlimited Gemini API calls → rate limit errors → all fail
+  - DB connection pool exhausted
+  Add:
+  - API rate limiting (slowapi library for FastAPI)
+  - RabbitMQ prefetch_count=1 on the consumer (process one at a time per worker)
+  - Semaphore on Gemini API calls within the worker
+  - Queue depth monitoring with alerts
+
+MISSING #4 — NO CI/CD PIPELINE
+  There is no .github/workflows/ directory. This is table stakes at Google.
+  Add a GitHub Actions workflow that on every PR:
+  1. Runs linting (ruff for Python, eslint for TypeScript)
+  2. Runs the full test suite
+  3. Builds the Docker images
+  4. Runs a smoke test against the composed stack
+  This is the single highest-ROI addition for resume credibility.
+
+MISSING #5 — DATABASE MIGRATIONS ARE UNMANAGED
+  SQLAlchemy creates tables with `create_all()` presumably. This is a toy
+  pattern. In production, you cannot alter a running database with create_all.
+  Add Alembic for migration management. Show version-controlled schema changes.
+  This is a basic expectation at any senior engineering level.
+
+MISSING #6 — NO API VERSIONING
+  Your FastAPI routes are presumably at /auth/*, /docs/*, etc.
+  What happens when you change a response schema? All clients break.
+  Add API versioning: /api/v1/documents, /api/v1/search etc.
+  This is a pattern Google and every serious company enforces from day one.
+
+MISSING #7 — SECRETS MANAGEMENT IS NAIVE
+  README says: "Add a .env file inside the backend/ directory"
+  This means:
+  - .env files get accidentally committed (check your .gitignore RIGHT NOW)
+  - No secret rotation mechanism
+  - No environment-specific config (dev vs staging vs prod)
+  Fix: Use python-dotenv for local dev but document how secrets would be
+  managed in production (Google Secret Manager, AWS Secrets Manager, or
+  Vault). Even just DESCRIBING the production path shows maturity.
+
+MISSING #8 — FRONTEND HAS NO ERROR BOUNDARIES OR LOADING STATES
+  The README describes a rich UI but doesn't mention error handling.
+  What does the user see when:
+  - The backend is down?
+  - A document takes 3 minutes to process?
+  - The RAG chatbot fails?
+  Add React Error Boundaries, skeleton loading components, and toast
+  notifications for async operation feedback. Use React Query (TanStack Query)
+  for server state management — this shows frontend engineering maturity.
+
+MISSING #9 — NO DOCUMENT RETENTION OR GDPR/DATA POLICY
+  You're storing enterprise documents (invoices, KYC cards, NDAs).
+  These contain PII. There is zero mention of:
+  - Data retention policies
+  - Document deletion / right-to-be-forgotten endpoints
+  - Encryption at rest for uploaded files
+  - PII detection before storage
+  Add at minimum: a DELETE /documents/{id} endpoint that removes DB record,
+  ChromaDB embeddings, AND the file from disk. Mention encryption at rest.
+
+--------------------------------------------------------------------------------
+SECTION 4: WHAT TO ADD — HIGH-IMPACT TECHNICAL UPGRADES
+--------------------------------------------------------------------------------
+
+UPGRADE #1 — REPLACE TESSERACT WITH GOOGLE DOCUMENT AI (or Azure Form Recognizer)
+  Tesseract is a 30-year-old local OCR engine with poor layout understanding.
+  Google Document AI's Form Parser extracts structured key-value pairs natively
+  from invoices, receipts, and contracts WITHOUT a separate "Extractor Agent."
+  This would:
+  a) Make the pipeline dramatically more accurate
+  b) Let you drop the Extractor Agent and simplify the consensus system
+  c) Show GCP-native thinking (very relevant if applying to Google)
+  If you want to keep Tesseract for the offline/free demo path, add Document AI
+  as a pluggable backend via a strategy pattern: OCRBackend = Tesseract | DocAI
+
+UPGRADE #2 — ADD APACHE KAFKA INSTEAD OF (OR ALONGSIDE) RABBITMQ
+  RabbitMQ is a message broker. Kafka is an event log. The difference matters:
+  - RabbitMQ: good for task queues (you have this right)
+  - Kafka: good for event sourcing, audit trails, replay
+  Your Audit Trails Ledger would be a PERFECT Kafka use case. Every status
+  transition (INGESTED → PROCESSING → AWAITING_REVIEW → PROCESSED) becomes
+  a Kafka event. You get: full replay capability, stream analytics, and a
+  genuinely impressive distributed systems story.
+  Even just ADDING a Kafka topic for audit events (while keeping RabbitMQ for
+  tasks) demonstrates dual-broker knowledge that almost no student project has.
+
+UPGRADE #3 — CONTAINERIZE EVERYTHING WITH KUBERNETES MANIFESTS
+  Docker Compose is dev tooling. Google runs Kubernetes. Add:
+  - Dockerfile for backend (multi-stage build: builder + slim runtime)
+  - Dockerfile for frontend (build + nginx serve stage)
+  - /k8s/ directory with Deployment, Service, ConfigMap, Secret YAMLs
+  - HorizontalPodAutoscaler for the worker deployment
+  - Liveness and Readiness probes on FastAPI (/health endpoint)
+  You don't need to run it on real K8s — the manifests existing shows you
+  know how production deployment works.
+
+UPGRADE #4 — ADD STREAMING RESPONSES FOR LONG DOCUMENTS
+  Currently the pipeline is fire-and-forget async (publish to RabbitMQ, poll
+  for status). Add Server-Sent Events (SSE) or WebSocket for real-time status
+  streaming:
+  Document uploaded → SSE stream opens → 
+    "OCR complete (2.3s)" → "Classification: INVOICE" →
+    "Agent 1/4 complete" → "Consensus: 91.2%" → "Status: PROCESSED"
+  This is the UX pattern Google products use. It transforms the dashboard from
+  a polling page to a live feed. FastAPI has native SSE support via
+  StreamingResponse.
+
+UPGRADE #5 — ADD A DOCUMENT LINEAGE / PROVENANCE GRAPH
+  Every transformation in your pipeline modifies the document's data. Right now
+  you log events to an "Audit Trails Ledger" but there's no way to see:
+  "The Critic Agent changed field 'vendor_name' from 'ACME Corp' to 'ACME Corp.'
+  at 14:32:01 because it detected a trailing period mismatch."
+  Add field-level diff tracking. Store before/after JSON for every agent pass.
+  Expose this as a timeline view in the frontend. This is genuinely novel and
+  directly mirrors how Google's internal ML pipelines track data provenance.
+
+UPGRADE #6 — IMPLEMENT ACTIVE LEARNING FROM HUMAN CORRECTIONS
+  Right now when a human reviewer corrects a field in the HITL portal, that
+  correction vanishes into the DB and is never used again.
+  Add: When a reviewer corrects extraction fields, log the (document_type,
+  field_name, ocr_raw_text, wrong_value, correct_value) tuple. Build a
+  corrections dataset. Fine-tune your TF-IDF extractor or use these examples
+  as few-shot examples in your next Gemini call. This closes the feedback loop
+  and gives the system a learning flywheel. This is ML engineering, not just
+  AI integration.
+
+UPGRADE #7 — ADD MULTI-TENANCY
+  Enterprise document platforms are multi-tenant by design. Add:
+  - Organization model in the DB
+  - All documents, audit logs, and vector embeddings scoped to an org_id
+  - Role-based access control: ADMIN, REVIEWER, VIEWER roles
+  - API key management for programmatic document ingestion
+  This transforms a demo into a credible SaaS architecture.
+
+UPGRADE #8 — BENCHMARK AND PUBLISH ACCURACY METRICS
+  The #1 thing that makes an AI project resume-worthy is NUMBERS.
+  Run your pipeline on a labeled dataset (100 invoices, 50 contracts, 50 RFQs).
+  Measure:
+  - Classification accuracy (%)
+  - Field extraction precision/recall per field per document type
+  - Consensus score calibration (does 91% confidence actually mean 91% correct?)
+  - Human review rate (what % of docs require human intervention)
+  Put these numbers in your README. "91.3% field extraction accuracy on invoices,
+  8.2% human review rate" is infinitely more impressive than "AI-powered platform."
+
+--------------------------------------------------------------------------------
+SECTION 5: README & PRESENTATION AUDIT
+--------------------------------------------------------------------------------
+
+WHAT'S GOOD:
+  - Architecture diagram (ASCII pipeline) is clear and shows systems thinking
+  - Directory layout is documented
+  - Heuristic fallback for offline demo is smart and well-communicated
+
+WHAT'S BROKEN:
+  1. No demo GIF/screenshots — Google engineers spend 15 seconds on a README.
+     Add an animated GIF showing upload → processing → review → search.
+     This is the single highest-ROI change for first impressions.
+
+  2. No architecture diagram image — The ASCII art is okay but a proper
+     system diagram (draw.io, Excalidraw, or Mermaid) showing services,
+     message flows, and data stores is what distinguishes a serious project.
+
+  3. No performance numbers anywhere in the README (see Upgrade #8 above).
+
+  4. "Production-grade" is self-declared — Google engineers will laugh.
+     Replace this claim with EVIDENCE: CI badge, test coverage badge,
+     Docker build badge. Let the tooling speak, not the marketing copy.
+
+  5. Windows-only quick start is a red flag. The start_platform.ps1 says
+     "I only tested this on my Windows laptop." Cross-platform or containerized
+     startup is mandatory.
+
+  6. No CONTRIBUTING.md, no LICENSE file — These are basic open-source hygiene.
+     Add an MIT license and a contribution guide. It signals maturity.
+
+  7. The "Audit Trails Ledger" is described as "immutably logs" but an SQL
+     UPDATE on the same table is mutable. If you want "immutable," use
+     append-only tables with no UPDATE/DELETE permissions, or use Kafka.
+     Don't use the word "immutable" for a standard SQL table.
+
+--------------------------------------------------------------------------------
+SECTION 6: HOW TO DESCRIBE THIS ON YOUR RESUME (Exact Bullet Points)
+--------------------------------------------------------------------------------
+
+BEFORE (what you'd naively write):
+  "Built a document intelligence platform using FastAPI, RabbitMQ, and AI agents"
+
+AFTER (what gets past Google's resume screen):
+
+  • Architected an event-driven document intelligence platform processing
+    multi-type enterprise documents (invoices, contracts, RFQs) via a
+    4-agent LLM consensus system achieving 91.3% field extraction accuracy
+
+  • Designed a RabbitMQ-backed async pipeline with Dead-Letter Exchange
+    and exponential backoff retry; reduced document processing latency by
+    implementing worker prefetch controls and async OCR thread pooling
+
+  • Built a Redis-backed distributed concurrency lock (SET NX EX) for the
+    HITL review portal, preventing simultaneous document edits across N
+    reviewer instances
+
+  • Implemented semantic RAG search over ChromaDB with persistent vector
+    storage, supporting natural language queries across 10,000+ indexed
+    document chunks with sub-200ms retrieval
+
+  • Established CI/CD pipeline (GitHub Actions) running pytest suite (84%
+    coverage) with Ruff linting and Docker build validation on every PR
+
+  • Deployed via Kubernetes with HPA scaling the document worker from 1-8
+    replicas under load, with Prometheus/Grafana monitoring agent latency
+    at p50/p95/p99
+
+(Note: only include bullets for things you actually implement)
+
+--------------------------------------------------------------------------------
+SECTION 7: PRIORITY ORDER — WHAT TO FIX FIRST
+--------------------------------------------------------------------------------
+
+WEEK 1 (Bugs — Fix These Now, They're Embarrassing):
+  [1] Fix Redis lock: remove in-memory dict fallback, implement SET NX EX
+  [2] Add Dead-Letter Queue to RabbitMQ consumer
+  [3] Fix ChromaDB to use PersistentClient with Docker volume
+  [4] Add file upload idempotency via SHA-256 content hash
+  [5] Add Alembic migrations (drop create_all)
+
+WEEK 2 (CI/CD + Tests — Non-Negotiable for Google):
+  [6] Add GitHub Actions CI workflow
+  [7] Write unit tests for all 4 agents with mocked LLM responses
+  [8] Write integration test for full pipeline
+  [9] Add pytest-cov, target 80%+ coverage
+  [10] Add Ruff + ESLint to CI
+
+WEEK 3 (Observability + Security):
+  [11] Add structured JSON logging with trace_id propagation
+  [12] Add /health and /metrics (Prometheus) endpoints
+  [13] Implement JWT refresh token with HttpOnly cookie
+  [14] Add MIME type validation on file upload (python-magic)
+  [15] Add API versioning (/api/v1/)
+
+WEEK 4 (High-Impact Upgrades for Resume Wow Factor):
+  [16] Add SSE streaming for real-time pipeline status
+  [17] Add Kubernetes manifests (Deployment, HPA, ConfigMap)
+  [18] Add accuracy benchmarks to README (run on 100 labeled docs)
+  [19] Add demo GIF and architecture diagram to README
+  [20] Add active learning loop from HITL corrections
+
+STRETCH (Truly Google-Level Differentiation):
+  [21] Add Kafka for audit event log alongside RabbitMQ for task queue
+  [22] Integrate Google Document AI as pluggable OCR backend
+  [23] Add multi-tenancy with org-scoped data isolation
+  [24] Add field-level provenance tracking (before/after diffs per agent)
+
+--------------------------------------------------------------------------------
+SECTION 8: GOOGLE HR'S FINAL VERDICT
+--------------------------------------------------------------------------------
+
+CURRENT STATE:  Would NOT pass resume screen at Google L3/L4.
+                Reason: Described as production-grade, engineered as a demo.
+                No tests, no CI, no observability, critical concurrency bugs.
+
+AFTER WEEK 1-2: Passes resume screen. Gets a phone screen.
+                The bug fixes + CI/CD + test coverage makes this credible.
+
+AFTER WEEK 3-4: Strong phone screen → likely technical interview.
+                Observability + security + K8s manifests + benchmark numbers
+                put this in the top 5% of student projects.
+
+AFTER STRETCH:  This becomes a portfolio anchor project.
+                Kafka + Document AI + multi-tenancy + provenance tracking
+                is a project that senior engineers find genuinely interesting.
+                At this point you're not showing you can code — you're showing
+                you think like a systems engineer.
+
+THE FUNDAMENTAL INSIGHT:
+  Google doesn't care that you used 8 technologies. Google cares that you
+  understand WHY each technology is there, what breaks when it fails, and
+  how you'd scale it to 10x load. Every fix in this document moves you from
+  "I integrated a technology" to "I engineered a system."
+
+  The project concept is excellent. The execution needs 3-4 weeks of
+  disciplined engineering work. Do the work. The ROI is enormous.
+
+================================================================================
+SECTION 9: NEXT-LEVEL FEATURES — FROM IMPRESSIVE TO UNFORGETTABLE
+================================================================================
+
+These features push DocIntel AI from "strong student project" into territory
+where even senior engineers at Google would say "that's actually interesting."
+They are grouped by engineering domain so you can pick the ones that align
+with your target role (SWE, ML Eng, Platform Eng, etc.).
+
+────────────────────────────────────────────────────────────────────────────────
+9A. INTELLIGENCE LAYER — Make the AI Actually Smarter
+────────────────────────────────────────────────────────────────────────────────
+
+FEATURE: Cross-Document Contradiction Detection
+  What: When a new document is uploaded, run a vector similarity search
+  against ALL existing documents from the same vendor/counterparty. If the
+  new invoice lists a unit price 40% higher than the last 5 invoices from
+  the same vendor, flag it automatically as a PRICE_ANOMALY.
+  Why it matters: This is a real enterprise use case (accounts payable fraud
+  detection). No student project does this. It requires you to store
+  per-vendor price history embeddings and run cosine similarity + statistical
+  outlier detection (Z-score or IQR) on numeric fields.
+  Tech: ChromaDB metadata filters + numpy stats + a new AnomalyDetector agent
+
+FEATURE: Clause-Level Contract Intelligence
+  What: For document type = CONTRACT/NDA/MSA, run a clause segmenter that
+  splits the document into named clauses (Termination, Liability Cap,
+  Governing Law, Indemnification). For each clause, run a separate
+  classification + risk scoring pass. Output a "contract risk heatmap"
+  showing which clauses are standard, modified, or missing vs. your
+  internal template.
+  Why it matters: This is literally what legal-tech startups charge $50k/year
+  for. You'd be building a mini Harvey AI. The architecture is the same
+  pipeline you already have — just with a new document type handler.
+  Tech: spaCy for clause boundary detection + Gemini for risk classification
+
+FEATURE: Named Entity Recognition (NER) Graph
+  What: Across all processed documents, build a knowledge graph of entities:
+  Companies, People, Dollar Amounts, Dates, Part Numbers, Legal Clauses.
+  Store relationships in a graph structure (e.g., "ACME Corp" appears in
+  47 documents, owes $2.3M, has 3 NDAs expiring in 2025).
+  Expose a visual graph explorer in the frontend.
+  Why it matters: This is the difference between "document storage" and
+  "document intelligence." It's the feature that makes the platform feel
+  like a living knowledge base, not a filing cabinet.
+  Tech: spaCy NER + NetworkX for graph building + D3.js force-directed graph
+  in the frontend
+
+FEATURE: Temporal Intelligence — Expiry Alerts & Deadline Tracking
+  What: Extract all dates from every document (contract end dates, payment
+  due dates, warranty expiry, compliance certification dates). Store them
+  in a unified timeline. Send proactive alerts (email/webhook) when a
+  deadline is approaching (30 days, 7 days, 1 day).
+  Why it matters: This turns DocIntel AI from a passive system into a
+  proactive one. "Your NDA with ACME Corp expires in 14 days" is a feature
+  CFOs actually pay for.
+  Tech: dateparser library + APScheduler for cron jobs + SendGrid/Resend
+  for email alerts (or just a webhooks endpoint)
+
+FEATURE: Document Similarity & Deduplication Clustering
+  What: Beyond upload-time SHA-256 deduplication, run semantic deduplication.
+  After embedding, cluster documents by cosine similarity. If two invoices
+  are 94% semantically similar but have different amounts, flag them as
+  POTENTIAL_DUPLICATE with a diff view showing what changed.
+  Why it matters: In enterprise settings, the same PO gets re-sent 3 times
+  with minor edits. Catching this is high business value.
+  Tech: ChromaDB vector search + DBSCAN clustering + unified diff display
+
+────────────────────────────────────────────────────────────────────────────────
+9B. PLATFORM ENGINEERING — Make It Production-Believable
+────────────────────────────────────────────────────────────────────────────────
+
+FEATURE: Webhook Delivery System
+  What: Allow users to register webhook URLs. On every document status change
+  (INGESTED → PROCESSED, or AWAITING_REVIEW → APPROVED), POST a signed
+  event payload to their endpoint. Use HMAC-SHA256 signing so receivers can
+  verify the payload is authentic.
+  Why it matters: This is how Stripe, GitHub, and Twilio work. It makes
+  DocIntel AI an integration-ready platform, not a standalone tool. Shows
+  you understand event-driven APIs from both sides.
+  Tech: httpx for async HTTP delivery + background retry with exponential
+  backoff + HMAC signing + webhook log table in Neon DB
+
+FEATURE: Plugin / Extraction Template System
+  What: Instead of hardcoding extraction logic per document type, build a
+  template engine. A template is a JSON config that defines:
+    - document_type: "PURCHASE_ORDER"
+    - required_fields: ["po_number", "vendor", "line_items", "total"]
+    - validation_rules: {"total": "sum(line_items.*.unit_price * quantity)"}
+    - compliance_checks: ["must_have_authorized_signature"]
+  Users can upload new templates via the UI without code changes.
+  Why it matters: This is the plugin architecture pattern. It makes the
+  platform extensible. It shows you understand configuration-as-code and
+  separation of policy from mechanism.
+  Tech: Pydantic for template validation + Jinja2 for dynamic prompt
+  generation from templates + JSONB column in Neon for template storage
+
+FEATURE: Async Batch Processing API
+  What: Add a POST /api/v1/batch endpoint that accepts a ZIP file containing
+  up to 500 documents. The endpoint immediately returns a batch_id and
+  processes documents asynchronously. Expose GET /api/v1/batch/{id}/status
+  returning a progress stream (50/500 processed, 12 failed, 438 pending).
+  Why it matters: Enterprise clients don't upload one document at a time.
+  Batch processing is a real requirement and shows you understand
+  bulk workload management.
+  Tech: zipfile extraction + RabbitMQ bulk publish + SSE progress stream
+  + batch_jobs table in Neon DB
+
+FEATURE: Full-Text Search with Elasticsearch (or Typesense)
+  What: Add a third search tier alongside your SQL filters and ChromaDB
+  vector search: keyword-based full-text search with highlighting, fuzzy
+  matching, and field-boosting. "Find all invoices mentioning 'stainless
+  steel grade 316'" should return results with the matching phrase highlighted.
+  Why it matters: Hybrid search (keyword + vector) is the current
+  state-of-the-art in enterprise search. Having all three tiers
+  (SQL, FTS, vector) is what Elastic, Notion, and Linear actually do.
+  Tech: Typesense (simpler to self-host than Elasticsearch) or
+  PostgreSQL full-text search (tsvector/tsquery via Neon — zero infra cost)
+
+FEATURE: Role-Based Access Control (RBAC) with Resource Scoping
+  What: Add three roles: ADMIN, REVIEWER, VIEWER.
+    - ADMIN: can manage users, templates, system config
+    - REVIEWER: can process HITL queue, approve/reject documents
+    - VIEWER: read-only access to processed documents and search
+  Scope ALL data queries to the user's organization (multi-tenancy).
+  Add an audit log of who accessed/modified what and when.
+  Why it matters: Every enterprise SaaS has RBAC. Without it the platform
+  is a toy. With it, it's an architecture you can defend in a system design
+  interview.
+  Tech: FastAPI dependency injection for role checks + org_id foreign key
+  on every table + row-level security in Neon PostgreSQL (VERY impressive
+  to mention — Neon supports RLS natively)
+
+────────────────────────────────────────────────────────────────────────────────
+9C. DEVELOPER EXPERIENCE — Makes You Look Like a 10x Engineer
+────────────────────────────────────────────────────────────────────────────────
+
+FEATURE: OpenAPI SDK Auto-Generation
+  What: FastAPI already generates an OpenAPI spec at /openapi.json. Use
+  openapi-generator to auto-generate a typed TypeScript client SDK from this
+  spec. Replace all your manual fetch() calls in the frontend with the
+  generated SDK. Add this as a CI step: on every backend route change,
+  regenerate and commit the SDK.
+  Why it matters: This is what Stripe and Twilio do for their SDKs. It
+  shows you understand API-first design and DX (developer experience).
+  The generated SDK also gives you type-safe API calls in the frontend
+  for free.
+
+FEATURE: Replay & Debug Mode
+  What: Store the full input/output of every agent call (prompt sent,
+  raw response received, parsed result, score assigned) in a debug_logs
+  table. Add a "Debug View" in the admin panel where you can re-run any
+  historical document through any individual agent and compare the new
+  output to the original. This is a pipeline replay system.
+  Why it matters: This is how ML teams debug production failures. Being
+  able to say "I built a replay system for my agent pipeline" in an
+  interview is very impressive. It shows operational maturity.
+
+FEATURE: Document Processing SLA Tracker
+  What: Track processing time for every document at each pipeline stage
+  (time_ocr_ms, time_classify_ms, time_agents_ms, time_total_ms). Expose
+  a SLA dashboard showing p50/p95/p99 latency per document type per week.
+  Alert when p95 exceeds a configurable threshold (e.g., 30 seconds).
+  Why it matters: SLA tracking is a core Site Reliability Engineering
+  concept. Google invented SRE. Showing you measure and alert on latency
+  percentiles is an instant credibility boost.
+
+────────────────────────────────────────────────────────────────────────────────
+9D. SECURITY FEATURES — Often Completely Ignored in Student Projects
+────────────────────────────────────────────────────────────────────────────────
+
+FEATURE: PII Detection & Redaction Pipeline
+  What: Before storing any document's extracted text in ChromaDB, run a
+  PII detection pass (names, SSNs, credit card numbers, emails, phone
+  numbers, bank account numbers). Log detected PII categories to the audit
+  trail. Optionally redact PII from the searchable text before indexing
+  (store the original encrypted, index the redacted version).
+  Why it matters: GDPR, CCPA, and HIPAA all require PII handling. Showing
+  you've thought about this is a huge differentiator for enterprise
+  credibility. Almost no student does this.
+  Tech: Microsoft Presidio (open-source PII detection, runs locally) or
+  Google DLP API (cloud-based, impressive on GCP-focused resume)
+
+FEATURE: Content Security Policy + Security Headers
+  What: Add a middleware layer to FastAPI that sets security headers on
+  every response: Content-Security-Policy, X-Frame-Options, X-XSS-Protection,
+  Strict-Transport-Security, X-Content-Type-Options. Add CORS configuration
+  that restricts allowed origins to your frontend domain only.
+  Why it matters: These are OWASP Top 10 basics. Security interviewers
+  at Google will ask if you've considered these. Having them shows you
+  don't just build features — you build secure features.
+  Tech: slowapi + custom FastAPI middleware (10 lines of code, huge signal)
+
+FEATURE: File Upload Malware Scanning Hook
+  What: Before processing any uploaded file, send it to ClamAV (open source
+  antivirus, runs in Docker) for scanning. If the scan returns a positive,
+  quarantine the file, mark the document as REJECTED, and log a security
+  event. This is an async pre-processing step before the main pipeline.
+  Why it matters: DocIntel AI processes files from external parties. In
+  an enterprise, those files WILL eventually contain malware. Showing you've
+  considered this attack vector is security-engineering maturity.
+  Tech: clamd Python client + ClamAV Docker container in your compose file
+
+================================================================================
+SECTION 10: UI INSPIRATION — SITES TO COPY FOR A 3D SMOOTH PREMIUM LOOK
+================================================================================
+
+Your current frontend is Next.js + Tailwind CSS. Good base. Here's exactly
+which sites to study, what to steal from each, and how to implement it.
+
+────────────────────────────────────────────────────────────────────────────────
+TIER 1 — DIRECTLY COPY THESE LAYOUTS (Document / SaaS / Dashboard UIs)
+────────────────────────────────────────────────────────────────────────────────
+
+1. LINEAR.APP (linear.app)
+   What to steal: The sidebar navigation, command palette (Cmd+K), keyboard
+   shortcuts, and the way list items animate on hover with a subtle left-border
+   highlight. Also steal their monospace font pairing with a sans-serif body.
+   How: Their design tokens are: #0F0F0F background, #1A1A1A cards, #333 borders
+   Font: "Inter" (body) + "JetBrains Mono" (code/IDs)
+   Specific component: Their "Issue Detail" split-panel layout is EXACTLY what
+   your HITL review portal should look like. Left = metadata, Right = editor.
+
+2. VERCEL DASHBOARD (vercel.com/dashboard)
+   What to steal: The deployment status timeline with live streaming dots.
+   The "Functions" tab with p50/p95/p99 latency bars. The dark/light mode
+   toggle. The project card grid with hover elevation.
+   How to implement 3D card hover:
+     CSS: transform: perspective(1000px) rotateX(2deg) rotateY(2deg)
+          transition: transform 0.2s ease
+          box-shadow: 0 20px 60px rgba(0,0,0,0.5)
+   This is the "3D smooth" look you're asking for.
+
+3. RESEND.COM (resend.com)
+   What to steal: Their logs page. Monospace timestamp column, colored status
+   badges (green=delivered, red=bounced, gray=pending), expandable row detail.
+   This is EXACTLY the right UI pattern for your Audit Trails Ledger.
+   Also steal: Their API Key management page design for your webhook system.
+
+4. RETOOL.COM (retool.com — the landing page, not the app)
+   What to steal: The animated pipeline/workflow diagram on their hero section.
+   This is perfect for your "How It Works" landing page. It shows data flowing
+   through stages with animated arrows. Implementable with Framer Motion.
+
+5. LANGFUSE.COM (langfuse.com)
+   What to steal: This is an LLM observability platform — almost identical
+   domain to yours. Their "Traces" view shows each LLM call as a waterfall
+   (input tokens, output tokens, latency, cost). Copy this DIRECTLY for your
+   agent debug view. Their color-coded span timeline is the exact UI for
+   showing OCR → Classify → Agent1 → Agent2 → Agent3 → Consensus.
+   THIS IS THE MOST RELEVANT SITE FOR YOUR PROJECT.
+
+6. DUNE.COM (dune.com — analytics dashboards)
+   What to steal: Their KPI dashboard layout. Large number stats at the top,
+   area charts below, filter pills on the side. Also their dark glassmorphism
+   card style. This is perfect for your KPI Analytics Control Center.
+
+────────────────────────────────────────────────────────────────────────────────
+TIER 2 — STEAL THESE SPECIFIC VISUAL EFFECTS
+────────────────────────────────────────────────────────────────────────────────
+
+EFFECT 1: Glassmorphism Cards (The "3D premium" look)
+  CSS Recipe:
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  Use on: Document cards, Agent score panels, Stats widgets
+  Reference sites: Stripe, Raycast, Luma
+
+EFFECT 2: Animated Gradient Borders
+  CSS Recipe:
+    @keyframes borderRotate {
+      0% { --angle: 0deg; }
+      100% { --angle: 360deg; }
+    }
+    border: 2px solid;
+    border-image: conic-gradient(from var(--angle), #7C3AED, #2563EB, #7C3AED) 1;
+  Use on: "AWAITING_REVIEW" document cards, active processing indicators
+  Reference: Vercel's deployment "building" state
+
+EFFECT 3: Smooth Number Counters (for KPI dashboard)
+  Library: react-countup
+  Implementation: When the KPI page mounts, animate numbers from 0 to their
+  actual value over 1.5 seconds with an ease-out curve.
+  "Total Documents Processed: 0 → 4,821" animating on load looks premium.
+
+EFFECT 4: 3D Perspective Tilt on Hover (for document cards)
+  Library: @tippyjs/react or vanilla JS with mouse event tracking
+  Implementation:
+    onMouseMove: calculate mouse position relative to card center
+    apply: transform: perspective(800px) rotateX(Ydeg) rotateY(Xdeg)
+  This is the "magic card" effect you see on Linear, Raycast, Framer.
+  It makes flat cards feel physically present.
+
+EFFECT 5: Skeleton Loading Screens
+  Replace ALL loading spinners with skeleton screens (gray animated
+  placeholder shapes that match the content layout).
+  Library: react-loading-skeleton
+  This single change makes your app feel dramatically more polished.
+
+EFFECT 6: Command Palette (Cmd+K)
+  Library: cmdk (used by Linear, Vercel, Raycast)
+  Add a global command palette that lets users:
+  - Jump to any document by ID or name
+  - Trigger "Process Document", "Open Review Queue"
+  - Switch between dark/light mode
+  - Search all documents without leaving current page
+  This single feature makes your app feel like a professional tool, not a demo.
+
+EFFECT 7: Framer Motion Page Transitions
+  Library: framer-motion
+  Add page enter/exit animations: pages slide in from right, fade in on load.
+  Add staggered list animations: document cards appear one by one with 50ms delay.
+  This is the smoothness you're asking for — it's not CSS, it's Framer Motion.
+
+────────────────────────────────────────────────────────────────────────────────
+TIER 3 — YOUR PAGE-BY-PAGE REDESIGN BLUEPRINT
+────────────────────────────────────────────────────────────────────────────────
+
+PAGE 1: DASHBOARD / HOME (Copy: Dune + Vercel)
+  Layout: Dark background (#0A0A0A). Top row: 4 large stat cards with
+  animated counters (Total Docs, Processed Today, Avg Confidence, Review Queue).
+  Middle: Recharts area chart (weekly volume, use gradient fill not solid).
+  Bottom-left: Recharts pie (category distribution, use custom legend not default).
+  Bottom-right: Live system health — color-coded dots for Neon DB, RabbitMQ,
+  ChromaDB with ping latency. Pulse animation on the green dots.
+  Font: Inter 400/500/600. Stat numbers in "DM Mono" or "JetBrains Mono".
+
+PAGE 2: DOCUMENT LIST (Copy: Linear Issues List)
+  Layout: Left sidebar with category filters (All, Invoice, Contract, RFQ, etc.)
+  and status filters. Right: sortable table with columns:
+  [Status Badge] [Doc Name] [Type] [Confidence Score Bar] [Upload Time] [Actions]
+  Confidence score: a mini horizontal progress bar, color-coded
+  (red <70%, yellow 70-85%, green >85%).
+  Row hover: subtle background lift + left blue accent border (Linear style).
+  Clicking a row expands an inline detail panel (no page navigation needed).
+
+PAGE 3: DOCUMENT DETAIL / AGENT VIEW (Copy: Langfuse Traces)
+  Layout: Split into 3 columns.
+  Left (30%): Document metadata, extracted fields in a structured card.
+  Center (40%): Agent pipeline waterfall. Each agent shown as a collapsible
+  row with: agent name, latency, score, and expandable raw input/output.
+  Right (30%): OCR text preview with scrollable raw text layout.
+  Top banner: Status bar showing current stage with animated step indicators.
+
+PAGE 4: HITL REVIEW PORTAL (Copy: Linear Issue Detail)
+  Layout: Full-screen split panel.
+  Left (50%): Raw OCR text in a monospace scrollable panel with line numbers.
+  Clicking a text region highlights the corresponding form field on the right.
+  Right (50%): Form with color-coded fields (red border = failed validation,
+  yellow = warning, green = passed). Each field shows the agent's extracted
+  value + a confidence chip. "Override" button expands a text input.
+  Bottom: Action bar with "Approve", "Reject", "Request Re-processing" buttons.
+  Sticky header: Document name + reviewer name + lock timer countdown.
+
+PAGE 5: SEARCH (Copy: Perplexity AI)
+  Layout: Centered search bar (large, rounded, with search icon + shortcut hint).
+  Below: Toggle between "Semantic Search" and "Metadata Filter" modes.
+  Semantic mode: results show document card + a highlighted "matching excerpt"
+  snippet with the relevant sentence bold.
+  RAG Chatbot: A sidebar that slides in from the right. Chat interface with
+  the assistant's responses showing source citations (which document, which page).
+  The chat should stream token by token (SSE), not appear all at once.
+
+PAGE 6: ANALYTICS (Copy: PostHog Dashboard)
+  Layout: Configurable widget grid (drag and drop if you want to go wild).
+  Widgets: Processing Volume trend, Confidence Score Distribution histogram,
+  Agent Latency heatmap (day vs hour), Human Override Rate trend,
+  Top Vendors by Document Volume, Category Distribution donut chart.
+  All charts use Recharts with custom dark theme and smooth animation on load.
+
+────────────────────────────────────────────────────────────────────────────────
+TIER 4 — SPECIFIC LIBRARIES TO INSTALL RIGHT NOW
+────────────────────────────────────────────────────────────────────────────────
+
+  npm install framer-motion           # Page transitions, card animations
+  npm install cmdk                    # Command palette (Cmd+K)
+  npm install @radix-ui/react-*       # Accessible UI primitives (Dialogs, Tooltips)
+  npm install react-loading-skeleton  # Skeleton screens
+  npm install react-countup           # Animated number counters
+  npm install react-hot-toast         # Toast notifications (much better than alerts)
+  npm install @tanstack/react-query   # Server state management (replaces useEffect+fetch)
+  npm install date-fns                # Date formatting
+  npm install clsx tailwind-merge     # Conditional className utilities
+  npm install zustand                 # Lightweight global state (auth, UI state)
+  npm install react-dropzone          # Beautiful drag-and-drop file upload zone
+
+  Color palette recommendation (dark, premium, Google-adjacent):
+    Background:    #080808  (near black)
+    Surface:       #111111  (cards)
+    Border:        #222222  (subtle)
+    Primary:       #4F6EF7  (Google Blue variant)
+    Success:       #22C55E  (green)
+    Warning:       #F59E0B  (amber)
+    Danger:        #EF4444  (red)
+    Text Primary:  #F5F5F5
+    Text Muted:    #6B7280
+    Accent:        #7C3AED  (purple — for AI/ML features)
+
+================================================================================
+SECTION 11: NEON DATABASE SETUP — CORRECT & SECURE CONFIGURATION
+================================================================================
+
+CRITICAL SECURITY NOTE:
+  ⚠️  NEVER commit your Neon connection string to Git.
+  ⚠️  NEVER paste it in chat, documentation, or any public place.
+  ⚠️  ROTATE YOUR PASSWORD IMMEDIATELY at neon.tech → Settings → Reset Password.
+  The connection string you shared is now compromised. A new one takes 30 seconds.
+
+CORRECT SETUP:
+
+Step 1: Store credentials ONLY in environment variables.
+  Create backend/.env (add to .gitignore BEFORE creating):
+  ---
+  DATABASE_URL=YOUR_NEW_ROTATED_NEON_CONNECTION_STRING
+  ---
+
+Step 2: backend/app/config.py — correct Neon configuration
+  ---
+  from pydantic_settings import BaseSettings
+
+  class Settings(BaseSettings):
+      database_url: str
+      # Neon requires SSL — ensure sslmode=require in the URL
+      # channel_binding=require is Neon's security requirement
+      # The -pooler. subdomain means you're using connection pooling (correct)
+
+      class Config:
+          env_file = ".env"
+
+  settings = Settings()
+  ---
+
+Step 3: backend/app/database.py — SQLAlchemy engine for Neon
+  ---
+  from sqlalchemy import create_engine
+  from sqlalchemy.orm import sessionmaker
+  from app.config import settings
+
+  # Neon is serverless — connections are expensive. Use pool_pre_ping to
+  # detect stale connections. pool_size=5 is enough for dev.
+  engine = create_engine(
+      settings.database_url,
+      pool_pre_ping=True,       # Test connection health before using
+      pool_size=5,              # Neon free tier: max 10 connections
+      max_overflow=2,           # Allow 2 extra connections under burst
+      pool_timeout=30,          # Wait max 30s for a connection
+      pool_recycle=1800,        # Recycle connections every 30 min
+                                # (prevents Neon's serverless cold-start issues)
+      connect_args={
+          "sslmode": "require",
+          "options": "-c channel_binding=require"
+      }
+  )
+
+  SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+  ---
+
+Step 4: Alembic migrations (stop using create_all)
+  ---
+  pip install alembic
+  alembic init alembic
+  # In alembic/env.py: set target_metadata = Base.metadata
+  # Set sqlalchemy.url = your DATABASE_URL in alembic.ini
+  # OR better: read from env var in env.py:
+  #   config.set_main_option("sqlalchemy.url", settings.database_url)
+
+  alembic revision --autogenerate -m "initial schema"
+  alembic upgrade head
+  ---
+
+Step 5: CI/CD — migrate on deploy, never manually
+  # In GitHub Actions deploy job, BEFORE starting the server:
+  ---
+  - name: Run database migrations
+    run: |
+      cd backend
+      alembic upgrade head
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+  ---
+
+Step 6: Neon-specific production tips
+  - Use the POOLER connection string (the one with -pooler. in the hostname)
+    for your application. This routes through PgBouncer connection pooling.
+    You already have this — the URL contains -pooler. which is correct.
+  - Use the DIRECT connection string (without -pooler.) ONLY for Alembic
+    migrations, because PgBouncer doesn't support all PostgreSQL features
+    needed during migrations.
+  - Enable Neon's "Auto-suspend" to save compute on free tier.
+  - Set up Neon branching: create a "dev" branch for development and a
+    "main" branch for production. Never run dev code against production DB.
+    `neon branches create --name dev` — this is a VERY impressive thing to
+    mention: "I use Neon database branching for environment isolation."
+
+================================================================================
+SECTION 12: FINAL CHECKLIST — EVERYTHING IN ORDER OF IMPACT
+================================================================================
+
+IMMEDIATE (This Week):
+  [ ] Rotate your Neon DB password RIGHT NOW
+  [ ] Fix Redis lock (remove in-memory fallback)
+  [ ] Add Dead-Letter Queue to RabbitMQ
+  [ ] Fix ChromaDB persistence (PersistentClient + Docker volume)
+  [ ] Add SHA-256 file upload idempotency
+  [ ] Set up Alembic migrations
+
+HIGH IMPACT (Next 2 Weeks):
+  [ ] GitHub Actions CI/CD pipeline
+  [ ] Unit tests for all 4 agents (mocked LLM)
+  [ ] pytest-cov targeting 80%+ coverage
+  [ ] Add /health and /metrics endpoints
+  [ ] Add structured JSON logging with trace_id
+  [ ] Add API versioning (/api/v1/)
+
+UI TRANSFORMATION (2-3 Weeks):
+  [ ] Install framer-motion, cmdk, react-hot-toast, @tanstack/react-query
+  [ ] Rebuild dashboard (Dune-style dark, animated counters)
+  [ ] Rebuild document list (Linear-style with confidence bars)
+  [ ] Rebuild agent view (Langfuse-style waterfall trace)
+  [ ] Rebuild HITL portal (split-panel with color-coded fields)
+  [ ] Add Cmd+K command palette
+  [ ] Add skeleton loading screens everywhere
+  [ ] Add 3D tilt effect on document cards
+  [ ] Add page transition animations with Framer Motion
+
+NEXT-LEVEL FEATURES (3-4 Weeks):
+  [ ] Cross-document anomaly/contradiction detection
+  [ ] Webhook delivery system with HMAC signing
+  [ ] SSE streaming for real-time pipeline status
+  [ ] Temporal intelligence + expiry alert system
+  [ ] PII detection with Microsoft Presidio
+  [ ] PostgreSQL full-text search (tsvector via Neon)
+  [ ] RBAC with Neon row-level security
+  [ ] SLA tracking (p50/p95/p99 per document type)
+  [ ] Pipeline replay / debug mode
+
+RESUME GOLD (4-6 Weeks):
+  [ ] Kubernetes manifests with HPA
+  [ ] Accuracy benchmark on 100+ labeled documents
+  [ ] NER knowledge graph with D3.js explorer
+  [ ] Active learning loop from HITL corrections
+  [ ] Kafka for audit event log
+  [ ] Multi-tenancy with org-scoped data
+  [ ] Add demo GIF to README (non-negotiable)
+  [ ] Publish benchmark numbers in README
+
+================================================================================
+END OF AUDIT (UPDATED v2)
+Prepared for: AadityaUniyal
+Project: DocIntel AI (Distributed AI Document Intelligence Platform)
+Audit Lens: Google L3/L4 SWE Bar
+Last Updated: June 2026
+================================================================================

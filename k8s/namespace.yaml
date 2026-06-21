@@ -1,0 +1,11 @@
+# ============================================================================
+# DocIntel AI Platform - Kubernetes Namespace
+# ============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: docintel
+  labels:
+    app.kubernetes.io/name: docintel
+    app.kubernetes.io/part-of: docintel-platform
+    app.kubernetes.io/managed-by: kubectl

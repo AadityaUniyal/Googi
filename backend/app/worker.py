@@ -16,6 +16,12 @@ from app.services.queue import register_local_worker_callback
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("worker")
 
+# Retry / DLQ constants
+MAX_RETRIES = 3
+DLX_EXCHANGE = "document_dlx"
+DLQ_QUEUE = "document_processing_dlq"
+MAIN_QUEUE = "document_processing_queue"
+
 def classify_document(filename: str, ocr_text: str) -> DocumentCategory:
     """
     Classifies a document based on filename patterns and text content.
@@ -133,11 +139,41 @@ def process_document(document_id: str):
                 db.commit()
         except Exception:
             pass
+        # Re-raise so that the RabbitMQ callback can handle retries
+        raise
     finally:
         db.close()
 
 # Register local thread runner callback in publisher module
 register_local_worker_callback(process_document)
+
+
+def _get_retry_count(properties: pika.BasicProperties) -> int:
+    """Extract the x-retry-count from message headers, defaulting to 0."""
+    if properties.headers and "x-retry-count" in properties.headers:
+        return int(properties.headers["x-retry-count"])
+    return 0
+
+
+def _republish_with_backoff(channel, body: bytes, properties: pika.BasicProperties, retry_count: int):
+    """Republish a message with incremented retry count and exponential backoff delay."""
+    backoff_seconds = min(2 ** retry_count, 60)  # 1s, 2s, 4s … capped at 60s
+    logger.info(f"Retrying message (attempt {retry_count + 1}/{MAX_RETRIES}) after {backoff_seconds}s backoff")
+    time.sleep(backoff_seconds)
+
+    new_headers = dict(properties.headers) if properties.headers else {}
+    new_headers["x-retry-count"] = retry_count + 1
+
+    channel.basic_publish(
+        exchange="",
+        routing_key=MAIN_QUEUE,
+        body=body,
+        properties=pika.BasicProperties(
+            delivery_mode=2,
+            headers=new_headers,
+        ),
+    )
+
 
 def rabbitmq_worker_main():
     """
@@ -157,21 +193,52 @@ def rabbitmq_worker_main():
             connection = pika.BlockingConnection(parameters)
             channel = connection.channel()
             
-            channel.queue_declare(queue="document_processing_queue", durable=True)
+            # Declare dead-letter exchange & queue
+            channel.exchange_declare(exchange=DLX_EXCHANGE, exchange_type="direct", durable=True)
+            channel.queue_declare(queue=DLQ_QUEUE, durable=True)
+            channel.queue_bind(queue=DLQ_QUEUE, exchange=DLX_EXCHANGE, routing_key=DLQ_QUEUE)
+
+            # Declare main queue with DLX arguments
+            channel.queue_declare(
+                queue=MAIN_QUEUE,
+                durable=True,
+                arguments={
+                    "x-dead-letter-exchange": DLX_EXCHANGE,
+                    "x-dead-letter-routing-key": DLQ_QUEUE,
+                },
+            )
             channel.basic_qos(prefetch_count=1)
             
             def on_message_callback(ch, method, properties, body):
+                retry_count = _get_retry_count(properties)
                 try:
                     payload = json.loads(body.decode())
                     doc_id = payload.get("document_id")
                     if doc_id:
                         process_document(doc_id)
-                except Exception as e:
-                    logger.error(f"Error handling message: {str(e)}")
-                finally:
+                    # Success — acknowledge the message
                     ch.basic_ack(delivery_tag=method.delivery_tag)
+                except Exception as e:
+                    logger.error(f"Error handling message (retry {retry_count}/{MAX_RETRIES}): {str(e)}")
+                    # ACK the current message so it doesn't loop via DLX automatically
+                    ch.basic_ack(delivery_tag=method.delivery_tag)
+                    if retry_count < MAX_RETRIES:
+                        # Republish with incremented retry count and exponential backoff
+                        _republish_with_backoff(ch, body, properties, retry_count)
+                    else:
+                        # Exhausted retries — NACK without requeue to send to DLQ
+                        logger.error(f"Max retries ({MAX_RETRIES}) exceeded. Sending message to DLQ.")
+                        ch.basic_publish(
+                            exchange=DLX_EXCHANGE,
+                            routing_key=DLQ_QUEUE,
+                            body=body,
+                            properties=pika.BasicProperties(
+                                delivery_mode=2,
+                                headers=dict(properties.headers) if properties.headers else {"x-retry-count": retry_count},
+                            ),
+                        )
             
-            channel.basic_consume(queue="document_processing_queue", on_message_callback=on_message_callback)
+            channel.basic_consume(queue=MAIN_QUEUE, on_message_callback=on_message_callback)
             logger.info("Worker daemon connected to RabbitMQ. Listening for messages...")
             channel.start_consuming()
             
@@ -187,3 +254,4 @@ def rabbitmq_worker_main():
 
 if __name__ == "__main__":
     rabbitmq_worker_main()
+

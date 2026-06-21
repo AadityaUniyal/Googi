@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timedelta
 import redis
 import logging
 
@@ -21,57 +21,51 @@ logger = logging.getLogger(__name__)
 # Role permissions
 reviewer_or_admin = RoleChecker([UserRole.ADMIN, UserRole.REVIEWER])
 
-# Helper for Redis locking with local in-memory fallback
-_local_locks = {}
+# Lock TTL in seconds (15 minutes)
+LOCK_TTL_SECONDS = 900
 
-def get_redis_client():
+
+def get_redis_client() -> redis.Redis:
+    """Return a Redis client or raise if Redis is unavailable."""
     try:
-        r = redis.Redis(host=settings.REDIS_HOST, port=settings.REDIS_PORT, decode_responses=True, socket_connect_timeout=1)
+        r = redis.Redis(host=settings.REDIS_HOST, port=settings.REDIS_PORT, decode_responses=True, socket_connect_timeout=2)
         r.ping()
         return r
-    except Exception:
-        return None
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Redis is unavailable — document locking requires Redis. Error: {exc}",
+        )
+
 
 def acquire_document_lock(document_id: str, username: str) -> bool:
     """
-    Attempts to lock a document. Returns True if lock acquired, False if already locked.
+    Attempts to lock a document using Redis SET NX EX (atomic set-if-not-exists with TTL).
+    Returns True if lock acquired, False if already locked by another user.
+    Raises HTTPException if Redis is unavailable.
     """
     lock_key = f"lock:document:{document_id}"
     r = get_redis_client()
-    if r:
-        # Lock expires in 15 minutes (900 seconds)
-        return r.set(lock_key, username, ex=900, nx=True) == True
-    else:
-        # Fallback to local in-memory dict
-        now = datetime.utcnow()
-        if lock_key in _local_locks:
-            holder, expiry = _local_locks[lock_key]
-            if now < expiry:
-                if holder == username:
-                    return True
-                return False
-        _local_locks[lock_key] = (username, now + datetime.timedelta(minutes=15))
+    # If the current user already holds the lock, extend the TTL
+    current_holder = r.get(lock_key)
+    if current_holder == username:
+        r.expire(lock_key, LOCK_TTL_SECONDS)
         return True
+    # Attempt atomic lock
+    return r.set(lock_key, username, ex=LOCK_TTL_SECONDS, nx=True) is True
+
 
 def release_document_lock(document_id: str):
     lock_key = f"lock:document:{document_id}"
     r = get_redis_client()
-    if r:
-        r.delete(lock_key)
-    else:
-        _local_locks.pop(lock_key, None)
+    r.delete(lock_key)
+
 
 def get_lock_holder(document_id: str) -> Optional[str]:
     lock_key = f"lock:document:{document_id}"
     r = get_redis_client()
-    if r:
-        return r.get(lock_key)
-    else:
-        if lock_key in _local_locks:
-            holder, expiry = _local_locks[lock_key]
-            if datetime.utcnow() < expiry:
-                return holder
-        return None
+    return r.get(lock_key)
+
 
 # Get Review Queue
 @router.get("/queue", response_model=List[DocumentSimpleResponse])
@@ -84,8 +78,11 @@ def get_review_queue(
     results = []
     for doc in documents:
         uploader_name = doc.uploader.full_name if doc.uploader else "System"
-        # Check lock status
-        lock_holder = get_lock_holder(str(doc.id))
+        # Check lock status — tolerate Redis being down for read-only queue listing
+        try:
+            lock_holder = get_lock_holder(str(doc.id))
+        except HTTPException:
+            lock_holder = None
         
         results.append({
             "id": doc.id,
@@ -114,6 +111,29 @@ def lock_document(
             detail=f"This document is currently locked for review by {holder}."
         )
     return {"message": "Document locked successfully", "locked_by": current_user.full_name}
+
+# Heartbeat — extend lock TTL by another 15 minutes (only if the current user holds the lock)
+@router.post("/{document_id}/heartbeat", status_code=status.HTTP_200_OK)
+def heartbeat_lock(
+    document_id: UUID,
+    current_user: User = Depends(reviewer_or_admin)
+):
+    doc_id_str = str(document_id)
+    lock_key = f"lock:document:{doc_id_str}"
+    r = get_redis_client()
+    current_holder = r.get(lock_key)
+    if current_holder is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active lock found for this document."
+        )
+    if current_holder != current_user.full_name:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Lock is held by {current_holder}, not you."
+        )
+    r.expire(lock_key, LOCK_TTL_SECONDS)
+    return {"message": "Lock extended successfully", "ttl_seconds": LOCK_TTL_SECONDS}
 
 # Unlock document
 @router.post("/{document_id}/unlock", status_code=status.HTTP_200_OK)
@@ -201,3 +221,4 @@ def submit_review(
     # Reload document
     db.refresh(doc)
     return doc
+

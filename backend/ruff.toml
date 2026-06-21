@@ -1,0 +1,32 @@
+# Ruff configuration for DocIntel AI backend
+# https://docs.astral.sh/ruff/
+
+target-version = "py311"
+line-length = 120
+
+[lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "S",    # bandit (security)
+    "T20",  # flake8-print
+]
+ignore = [
+    "S101",   # Allow assert in tests
+    "S105",   # Allow hardcoded passwords (for defaults in config)
+    "S106",   # Allow hardcoded password args
+    "B008",   # Allow function calls in argument defaults (FastAPI Depends)
+    "E501",   # Line too long (handled by formatter)
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106", "T20"]
+"alembic/*" = ["F401"]
+
+[format]
+quote-style = "double"
+indent-style = "space"

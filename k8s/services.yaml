@@ -1,0 +1,111 @@
+# ============================================================================
+# DocIntel AI Platform - Services & Ingress
+# ============================================================================
+
+# --- Backend Service (ClusterIP) ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: docintel
+  labels:
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: docintel-platform
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/component: api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      protocol: TCP
+
+---
+# --- Frontend Service (ClusterIP) ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: docintel
+  labels:
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/component: web
+    app.kubernetes.io/part-of: docintel-platform
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/component: web
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+      protocol: TCP
+
+---
+# --- Ingress ---
+# Routes external traffic to frontend and backend services.
+#
+# Prerequisites:
+#   - An Ingress Controller must be installed (e.g., ingress-nginx)
+#   - Update the host value to your actual domain
+#   - For TLS, configure cert-manager or provide your own certificate
+# ============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: docintel-ingress
+  namespace: docintel
+  labels:
+    app.kubernetes.io/name: docintel-ingress
+    app.kubernetes.io/part-of: docintel-platform
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    # Uncomment for TLS with cert-manager:
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  # Uncomment for TLS:
+  # tls:
+  #   - hosts:
+  #       - docintel.example.com
+  #     secretName: docintel-tls
+  rules:
+    - host: docintel.example.com  # <-- Replace with your domain
+      http:
+        paths:
+          # Backend API routes
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          - path: /health
+            pathType: Exact
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          - path: /docs
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          # Frontend (catch-all)
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 3000

@@ -1,0 +1,43 @@
+# ============================================================================
+# DocIntel AI Platform - ConfigMap
+# ============================================================================
+# Non-secret configuration values shared across backend and worker pods.
+# Update these values for your environment.
+# ============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: docintel-config
+  namespace: docintel
+  labels:
+    app.kubernetes.io/name: docintel-config
+    app.kubernetes.io/part-of: docintel-platform
+data:
+  # --- Application ---
+  APP_NAME: "DocIntel AI"
+  ENVIRONMENT: "production"
+  DEBUG: "false"
+  LOG_LEVEL: "info"
+
+  # --- Backend ---
+  BACKEND_URL: "http://backend:8000"
+  BACKEND_HOST: "0.0.0.0"
+  BACKEND_PORT: "8000"
+  BACKEND_WORKERS: "4"
+
+  # --- RabbitMQ ---
+  RABBITMQ_HOST: "rabbitmq"
+  RABBITMQ_PORT: "5672"
+  RABBITMQ_VHOST: "/"
+
+  # --- Redis ---
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+
+  # --- Document Processing ---
+  MAX_UPLOAD_SIZE_MB: "50"
+  SUPPORTED_FILE_TYPES: "pdf,docx,txt,md,csv"
+
+  # --- CORS ---
+  CORS_ORIGINS: "https://docintel.example.com"

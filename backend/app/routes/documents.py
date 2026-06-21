@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status, Query
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import UUID
+import hashlib
 import os
 
 from app.database import get_db
@@ -30,6 +32,33 @@ async def upload_document(
     storage_data = save_uploaded_file(file)
     
     try:
+        # Compute SHA-256 hash of saved file content
+        sha256 = hashlib.sha256()
+        with open(storage_data["file_path"], "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                sha256.update(chunk)
+        content_hash = sha256.hexdigest()
+        
+        # Check for duplicate upload
+        existing_doc = db.query(Document).filter(Document.content_hash == content_hash).first()
+        if existing_doc:
+            # Clean up the duplicate file we just saved
+            delete_stored_file(storage_data["file_path"])
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={
+                    "message": "Duplicate document detected. Returning existing document.",
+                    "duplicate": True,
+                    "id": str(existing_doc.id),
+                    "filename": existing_doc.filename,
+                    "file_type": existing_doc.file_type,
+                    "category": existing_doc.category.value if existing_doc.category else None,
+                    "status": existing_doc.status.value if existing_doc.status else None,
+                    "consensus_score": existing_doc.consensus_score,
+                    "created_at": existing_doc.created_at.isoformat() if existing_doc.created_at else None,
+                },
+            )
+
         # Create database entry for document
         db_doc = Document(
             filename=storage_data["filename"],
@@ -37,7 +66,8 @@ async def upload_document(
             file_type=storage_data["file_type"],
             status=DocumentStatus.INGESTED,
             category=DocumentCategory.UNKNOWN,
-            uploaded_by=current_user.id
+            uploaded_by=current_user.id,
+            content_hash=content_hash,
         )
         db.add(db_doc)
         db.commit()
@@ -51,7 +81,8 @@ async def upload_document(
             details={
                 "filename": db_doc.filename,
                 "file_type": db_doc.file_type,
-                "size_bytes": storage_data["size_bytes"]
+                "size_bytes": storage_data["size_bytes"],
+                "content_hash": content_hash,
             }
         )
         db.add(audit)
@@ -64,8 +95,9 @@ async def upload_document(
         return db.query(Document).filter(Document.id == db_doc.id).first()
         
     except Exception as e:
-        # Clean up file in case of database registration errors
-        delete_stored_file(storage_data["file_path"])
+        if not isinstance(e, HTTPException) and not hasattr(e, "status_code"):
+            # Clean up file in case of database registration errors
+            delete_stored_file(storage_data["file_path"])
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to record document upload: {str(e)}"

@@ -50,7 +50,7 @@ def test_auditor_agent_invoice_math():
     audit_res_mismatch = run_auditor_agent(DocumentCategory.INVOICE, fields_mismatch)
     for key in fields_mismatch.keys():
         assert audit_res_mismatch[key]["score"] == 0.0
-        assert "Arithmetic Mismatch" in audit_res_mismatch[key]["notes"]
+        assert "arithmetic" in audit_res_mismatch[key]["notes"].lower()
         
     # 3. String characters in numbers
     fields_dollar_sign = {

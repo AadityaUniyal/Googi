@@ -17,6 +17,8 @@ export const metadata: Metadata = {
   description: "Automated multi-agent document auditing, structured text extraction, RAG search, and human-in-the-loop validation.",
 };
 
+import { AppLayout } from "@/components/layout/AppLayout";
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -27,7 +29,9 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <AppLayout>{children}</AppLayout>
+      </body>
     </html>
   );
 }

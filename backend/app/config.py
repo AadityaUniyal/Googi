@@ -7,11 +7,11 @@ class Settings(BaseSettings):
     APP_NAME: str = "Distributed AI Document Intelligence Platform"
     DEBUG: bool = True
     
-    # Database Config (Neon PostgreSQL URL provided by user)
-    DATABASE_URL: str = "postgresql://neondb_owner:npg_zYGUZECQ75Rw@ep-tiny-night-att4o5ml-pooler.c-9.us-east-1.aws.neon.tech/neondb?sslmode=require"
+    # Database Config (set via DATABASE_URL env var or .env file)
+    DATABASE_URL: str = "postgresql://user:password@localhost:5432/docintel"
     
     # Security & Auth Config
-    JWT_SECRET_KEY: str = "google-step-swe-internship-key-change-in-prod"
+    JWT_SECRET_KEY: str = ""  # MUST be set via env var — generate with: python -c "import secrets; print(secrets.token_urlsafe(64))"
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 Hours
     

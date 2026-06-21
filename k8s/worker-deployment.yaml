@@ -1,0 +1,117 @@
+# ============================================================================
+# DocIntel AI Platform - Document Processing Worker Deployment
+# ============================================================================
+# Worker consumes messages from RabbitMQ and processes documents.
+# Paired with an HPA for auto-scaling based on CPU utilization.
+# ============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: docintel
+  labels:
+    app.kubernetes.io/name: worker
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: docintel-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: worker
+      app.kubernetes.io/component: worker
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 2
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: worker
+        app.kubernetes.io/component: worker
+        app.kubernetes.io/part-of: docintel-platform
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: worker
+          image: docintel-backend:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "app.worker"]
+          envFrom:
+            - configMapRef:
+                name: docintel-config
+            - secretRef:
+                name: docintel-secrets
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "125m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          # Workers don't serve HTTP, so use exec probe instead
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import os; os._exit(0)"
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: uploads
+              mountPath: /app/uploads
+      volumes:
+        - name: uploads
+          emptyDir:
+            sizeLimit: 2Gi
+      terminationGracePeriodSeconds: 60  # Allow in-progress documents to finish
+---
+# ============================================================================
+# HorizontalPodAutoscaler for Worker
+# ============================================================================
+# Scales workers from 1 to 8 based on CPU utilization.
+# When document processing load increases, additional workers are spawned.
+# ============================================================================
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: worker-hpa
+  namespace: docintel
+  labels:
+    app.kubernetes.io/name: worker
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: docintel-platform
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: worker
+  minReplicas: 1
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120

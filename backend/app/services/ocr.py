@@ -1,8 +1,16 @@
 import os
 import time
+import asyncio
+import logging
+from concurrent.futures import ThreadPoolExecutor
 from PIL import Image
 import pytesseract
 from app.models.document import DocumentCategory
+
+logger = logging.getLogger(__name__)
+
+# Thread pool for non-blocking OCR (bounded to avoid resource exhaustion)
+_ocr_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ocr")
 
 # Optional: Configuration for Tesseract path on Windows if installed in default locations
 TESSERACT_CMD_POSSIBILITIES = [
@@ -18,6 +26,8 @@ def extract_text_from_image(image_path: str) -> str:
     try:
         img = Image.open(image_path)
         return pytesseract.image_to_string(img)
+    except FileNotFoundError:
+        raise RuntimeError(f"Tesseract OCR engine not found. Ensure Tesseract is installed and on PATH.")
     except Exception as e:
         # If tesseract is not installed, raise specific error to trigger fallback
         raise RuntimeError(f"Tesseract extraction failed: {str(e)}")
@@ -171,7 +181,8 @@ Approved by: Michael Smith, Procurement Manager
 
 def perform_ocr(file_path: str, filename: str, file_type: str) -> str:
     """
-    Coordinates file reading and OCR processing.
+    Coordinates file reading and OCR processing (synchronous).
+    Used by the background worker which runs in its own thread.
     """
     time.sleep(1.0)  # Simulate processing latency
     
@@ -187,9 +198,31 @@ def perform_ocr(file_path: str, filename: str, file_type: str) -> str:
     if file_type in ["PNG", "JPG", "JPEG", "TIFF"]:
         try:
             return extract_text_from_image(file_path)
-        except Exception:
+        except Exception as exc:
+            logger.warning(f"Tesseract OCR failed for {filename}: {exc}. Falling back to mock text.")
             # Fall back to high-fidelity mock
             return get_high_fidelity_mock_text(filename)
             
     # 3. PDF/DOCX or others - Fallback to high-fidelity mock text directly
     return get_high_fidelity_mock_text(filename)
+
+
+async def perform_ocr_async(file_path: str, filename: str, file_type: str) -> str:
+    """
+    Async wrapper for OCR processing. Runs blocking Tesseract/IO calls
+    in a ThreadPoolExecutor so the FastAPI event loop stays unblocked.
+    """
+    loop = asyncio.get_running_loop()
+    try:
+        result = await loop.run_in_executor(
+            _ocr_executor,
+            perform_ocr,
+            file_path,
+            filename,
+            file_type,
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Async OCR failed for {filename}: {e}")
+        raise RuntimeError(f"OCR processing failed: {str(e)}")
+
