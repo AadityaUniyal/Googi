@@ -24,3 +24,7 @@ Thumbs.db
 .vscode/
 .idea/
 .agents/
+
+# Python packaging & build artifacts
+dist/
+*.egg-info/
